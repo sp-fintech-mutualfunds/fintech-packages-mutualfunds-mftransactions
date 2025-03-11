@@ -13,7 +13,7 @@ class MfTransactions extends BasePackage
 
     public $mftransactions;
 
-    public function getAccountsBalancesById($id)
+    public function getMfTransactionById($id)
     {
         $mftransactions = $this->getById($id);
 
@@ -27,12 +27,12 @@ class MfTransactions extends BasePackage
         $this->addResponse('Error', 1);
     }
 
-    public function addAccountsBalances($data)
+    public function addMfTransaction($data)
     {
         //
     }
 
-    public function updateAccountsBalances($data)
+    public function updateMfTransaction($data)
     {
         $mftransactions = $this->getById($id);
 
@@ -46,7 +46,7 @@ class MfTransactions extends BasePackage
         $this->addResponse('Error', 1);
     }
 
-    public function removeAccountsBalances($data)
+    public function removeMfTransaction($data)
     {
         $mftransactions = $this->getById($id);
 
