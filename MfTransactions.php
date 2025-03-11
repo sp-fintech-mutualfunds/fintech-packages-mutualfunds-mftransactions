@@ -2,7 +2,7 @@
 
 namespace Apps\Fintech\Packages\Mf\Transactions;
 
-use Apps\Fintech\Packages\Accounts\Transactions\Model\AppsFintechMfTransactions;
+use Apps\Fintech\Packages\Mf\Transactions\Model\AppsFintechMfTransactions;
 use System\Base\BasePackage;
 
 class MfTransactions extends BasePackage
