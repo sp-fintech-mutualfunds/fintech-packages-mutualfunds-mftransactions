@@ -43,6 +43,13 @@ class MfTransactions
                     ]
                 ),
                 new Column(
+                    'amfi_code',
+                    [
+                        'type'          => Column::TYPE_INTEGER,
+                        'notNull'       => true,
+                    ]
+                ),
+                new Column(
                     'date',
                     [
                         'type'          => Column::TYPE_VARCHAR,

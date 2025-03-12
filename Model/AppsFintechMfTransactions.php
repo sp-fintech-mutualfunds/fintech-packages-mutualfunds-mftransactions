@@ -14,11 +14,13 @@ class AppsFintechMfTransactions extends BaseModel
 
     public $portfolio_id;
 
+    public $amfi_code;
+
     public $date;
 
     public $amount;
 
-    public $type;//Debit/Credit/Equity
+    public $type;//Purchase/Sale
 
     public $reference;
 
