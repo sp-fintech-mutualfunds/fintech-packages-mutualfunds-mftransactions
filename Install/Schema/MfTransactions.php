@@ -43,10 +43,25 @@ class MfTransactions
                     ]
                 ),
                 new Column(
+                    'amc_id',
+                    [
+                        'type'          => Column::TYPE_INTEGER,
+                        'notNull'       => false,
+                    ]
+                ),
+                new Column(
                     'amfi_code',
                     [
                         'type'          => Column::TYPE_INTEGER,
-                        'notNull'       => true,
+                        'notNull'       => false,
+                    ]
+                ),
+                new Column(
+                    'folio_no',
+                    [
+                        'type'          => Column::TYPE_VARCHAR,
+                        'size'          => 100,
+                        'notNull'       => false,
                     ]
                 ),
                 new Column(
@@ -68,12 +83,12 @@ class MfTransactions
                     'type',
                     [
                         'type'          => Column::TYPE_VARCHAR,
-                        'size'          => 10,
+                        'size'          => 20,
                         'notNull'       => true,
                     ]
                 ),
                 new Column(
-                    'reference',
+                    'details',
                     [
                         'type'          => Column::TYPE_VARCHAR,
                         'size'          => 1024,
