@@ -17,9 +17,9 @@ class MfTransactions extends BasePackage
 
     public function getMfTransactionById($id)
     {
-        $mftransactions = $this->getById($id);
+        $mfTransactions = $this->getById($id);
 
-        if ($mftransactions) {
+        if ($mfTransactions) {
             //
             $this->addResponse('Success');
 
@@ -33,46 +33,29 @@ class MfTransactions extends BasePackage
     {
         $data['account_id'] = $this->access->auth->account()['id'];
 
-        if ($data['type'] === 'debit_fund' || $data['type'] === 'credit_fund') {
-            $UsersBalancePackage = $this->usePackage(AccountsBalances::class);
+        // $usersBalancePackage = $this->usePackage(AccountsBalances::class);
 
-            if ($data['type'] === 'debit_fund') {
-                $userEquity = $UsersBalancePackage->getUserEquity($data);
+        if ($data['type'] === 'buy') {
+            // $userEquity = $usersBalancePackage->getUserEquity($data);
 
-                if ($userEquity !== false) {
-                    if ((float) $data['amount'] <= $userEquity) {
-                        if ($this->add($data)) {
-                            $data['type'] = 'credit';
-
-                            $data['details'] = 'Added via Portfolio ID:' . $data['portfolio_id'] . '. Transaction ID: ' . $this->packagesData->last['id'] . '.';
-
-                            $UsersBalancePackage->addAccountsBalances($data);
-
-                            $this->recalculatePortfolioTransactions($data);
-
-                            $this->addResponse('Ok', 0);
-
-                            return true;
-                        }
-                        $this->addResponse('Error adding information, contact developer', 1);
-
-                        return false;
-                    }
-
-                    $this->addResponse('User does not have enough equity. Current balance is : ' . $userEquity, 1);
-
-                    return false;
-                }
-            } else if ($data['type'] === 'credit_fund') {
-                $amounts = $this->recalculatePortfolioTransactions($data);
-
-                if ((float) $data['amount'] <= $amounts['equity_balance']) {
+            if ($userEquity !== false) {
+                if ((float) $data['amount'] <= $userEquity) {
                     if ($this->add($data)) {
-                        $data['type'] = 'debit';
+                        // $newTransaction = $this->packagesData->last;
 
-                        $data['details'] = 'Added via Portfolio ID:' . $data['portfolio_id'] . '. Transaction ID: ' . $this->packagesData->last['id'] . '.';
+                        // $data['type'] = 'credit';
 
-                        $UsersBalancePackage->addAccountsBalances($data);
+                        // $data['details'] = 'Added via Portfolio ID:' . $data['portfolio_id'] . '. Transaction ID: ' . $newTransaction['id'] . '.';
+
+                        // $data['used_by'] = $newTransaction['id'];
+
+                        // $usersBalancePackage->addAccountsBalances($data);
+
+                        // $newBalance = $usersBalancePackage->packagesData->last;
+
+                        // $newTransaction['tx_id'] = $newBalance['id'];
+
+                        // $this->update($newTransaction);
 
                         $this->recalculatePortfolioTransactions($data);
 
@@ -80,47 +63,97 @@ class MfTransactions extends BasePackage
 
                         return true;
                     }
-
                     $this->addResponse('Error adding information, contact developer', 1);
 
                     return false;
                 }
 
-                $this->addResponse('Portfolio does not have enough equity. Current balance is : ' . $amounts['equity_balance'], 1);
+                $this->addResponse('User does not have enough equity. Current balance is : ' . $userEquity, 1);
 
                 return false;
-
             }
+        } else if ($data['type'] === 'sell') {
+            // $amounts = $this->recalculatePortfolioTransactions($data);
 
-            $this->addResponse('Cannot obtain user equity information. Contact developer!', 1);
+            // if ((float) $data['amount'] <= $amounts['equity_balance']) {
+            //     if ($this->add($data)) {
+            //         $newTransaction = $this->packagesData->last;
 
-            return false;
+            //         $data['type'] = 'debit';
+
+            //         $data['details'] = 'Added via Portfolio ID:' . $data['portfolio_id'] . '. Transaction ID: ' . $newTransaction['id'] . '.';
+
+            //         $usersBalancePackage->addAccountsBalances($data);
+
+            //         $newBalance = $usersBalancePackage->packagesData->last;
+
+            //         $newTransaction['tx_id'] = $newBalance['id'];
+
+            //         $this->update($newTransaction);
+
+            //         $this->recalculatePortfolioTransactions($data);
+
+            //         $this->addResponse('Ok', 0);
+
+            //         return true;
+            //     }
+
+            //     $this->addResponse('Error adding information, contact developer', 1);
+
+            //     return false;
+            // }
+
+            // $this->addResponse('Portfolio does not have enough equity. Current balance is : ' . $amounts['equity_balance'], 1);
+
+            // return false;
         }
+
+        $this->addResponse('Cannot obtain user equity information. Contact developer!', 1);
+
+        return false;
     }
 
     public function updateMfTransaction($data)
     {
-        $mftransactions = $this->getById($id);
+        $mfTransactions = $this->getById($data['id']);
 
-        if ($mftransactions) {
-            //
-            $this->addResponse('Success');
+        if ($mfTransactions) {
+            $mfTransactions['date'] = $data['date'];
+            $mfTransactions['amount'] = $data['amount'];
+            $mfTransactions['details'] = $data['details'];
 
-            return;
+            if ($this->update($mfTransactions)) {
+                $this->addResponse('Updated transaction');
+
+                return;
+            }
         }
 
-        $this->addResponse('Error', 1);
+        $this->addResponse('Error updating transaction.', 1);
     }
 
     public function removeMfTransaction($data)
     {
-        $mftransactions = $this->getById($id);
+        $mfTransactions = $this->getById($data['id']);
 
-        if ($mftransactions) {
-            //
-            $this->addResponse('Success');
+        if ($mfTransactions) {
+            if ($mfTransactions['type'] === 'debit' || $mfTransactions['type'] === 'credit') {
+                $usersBalancePackage = $this->usePackage(AccountsBalances::class);
 
-            return;
+                $userBalance = $usersBalancePackage->getById($mfTransactions['tx_id']);
+
+                if ($userBalance) {
+                    if ($this->remove($mfTransactions['id'])) {
+                        $usersBalancePackage->remove($userBalance['id']);
+                    }
+                }
+
+                $amounts = $this->recalculatePortfolioTransactions(['portfolio_id' => $mfTransactions['portfolio_id']]);
+
+                $this->addResponse('Cannot obtain user equity information. Contact developer!', 1);
+
+                return false;
+            }
         }
 
         $this->addResponse('Error', 1);
@@ -153,9 +186,9 @@ class MfTransactions extends BasePackage
 
         if ($transactions && count($transactions) > 0) {
             foreach ($transactions as $transaction) {
-                if ($transaction['type'] === 'debit_fund') {
+                if ($transaction['type'] === 'debit') {
                     $debitTotal = $debitTotal + $transaction['amount'];
-                } else if ($transaction['type'] === 'credit_fund') {
+                } else if ($transaction['type'] === 'credit') {
                     $creditTotal = $creditTotal + $transaction['amount'];
                 } else if ($transaction['type'] === 'buy') {
                     $buyTotal = $buyTotal + $transaction['amount'];
