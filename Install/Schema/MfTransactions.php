@@ -83,7 +83,7 @@ class MfTransactions
                     'type',
                     [
                         'type'          => Column::TYPE_VARCHAR,
-                        'size'          => 20,
+                        'size'          => 10,
                         'notNull'       => true,
                     ]
                 ),
@@ -99,7 +99,7 @@ class MfTransactions
                     'tx_units',
                     [
                         'type'          => Column::TYPE_FLOAT,
-                        'notNull'       => false,
+                        'notNull'       => true,
                     ]
                 ),
                 new Column(
@@ -113,8 +113,9 @@ class MfTransactions
                 new Column(
                     'tx_status',
                     [
-                        'type'          => Column::TYPE_BOOLEAN,
-                        'notNull'       => false,
+                        'type'          => Column::TYPE_VARCHAR,
+                        'size'          => 10,
+                        'notNull'       => true,
                     ]
                 )
             ],

@@ -179,18 +179,12 @@ class MfTransactions extends BasePackage
 
         $transactions = $this->getByParams($conditions);
 
-        $debitTotal = 0;
-        $creditTotal = 0;
         $buyTotal = 0;
         $sellTotal = 0;
 
         if ($transactions && count($transactions) > 0) {
             foreach ($transactions as $transaction) {
-                if ($transaction['type'] === 'debit') {
-                    $debitTotal = $debitTotal + $transaction['amount'];
-                } else if ($transaction['type'] === 'credit') {
-                    $creditTotal = $creditTotal + $transaction['amount'];
-                } else if ($transaction['type'] === 'buy') {
+                if ($transaction['type'] === 'buy') {
                     $buyTotal = $buyTotal + $transaction['amount'];
                 } else if ($transaction['type'] === 'sell') {
                     $sellTotal = $sellTotal + $transaction['amount'];
@@ -198,9 +192,6 @@ class MfTransactions extends BasePackage
             }
         }
 
-        $creditTotal = $creditTotal + $buyTotal;
-        $debitTotal = $debitTotal + $sellTotal;
-        $equityTotal = $debitTotal - $creditTotal;
         $investedAmountTotal = $buyTotal - $sellTotal;
         // $profitLossTotal = $sellTotal - $buyTotal; This needs to be calculated correctly
         // $totalValue = This needs to be calculated correctly
@@ -216,7 +207,6 @@ class MfTransactions extends BasePackage
         }
 
         if ($portfolio) {
-            $portfolio['equity_balance'] = $equityTotal;
             $portfolio['invested_amount'] = $investedAmountTotal;
             // $portfolio['total_value'] = ;
             // $portfolio['profit_loss'] = ;
@@ -233,11 +223,6 @@ class MfTransactions extends BasePackage
         $this->addResponse('Recalculated',
                            0,
                            [
-                                'equity_balance' => str_replace('EN_ ',
-                                                                '',
-                                                                (new \NumberFormatter('en_IN', \NumberFormatter::CURRENCY))
-                                                                    ->formatCurrency($portfolio['equity_balance'], 'en_IN')
-                                                                ),
                                 'invested_amount' => str_replace('EN_ ',
                                                                 '',
                                                                 (new \NumberFormatter('en_IN', \NumberFormatter::CURRENCY))
@@ -257,10 +242,9 @@ class MfTransactions extends BasePackage
         );
 
         return [
-            'equity_balance' => $portfolio['equity_balance'],
             'invested_amount' => $portfolio['invested_amount'],
-            'total_value' => $portfolio['total_value'],
-            'profit_loss' => $portfolio['profit_loss'],
+            // 'total_value' => $portfolio['total_value'],
+            // 'profit_loss' => $portfolio['profit_loss'],
         ];
     }
 }
