@@ -18,20 +18,30 @@ class AppsFintechMfTransactions extends BaseModel
 
     public $amfi_code;
 
-    public $folio_no;
-
     public $date;
 
     public $amount;
 
-    public $type;//Buy/Sell/Transfer
+    public $type;//Buy/Sell
 
     public $details;
 
-    public $tx_units;
+    public $units_bought;
 
-    public $tx_id;
+    public $units_sold;
+
+    public $latest_value;
+
+    public $latest_value_date;
+
+    public $amc_transaction_id;
     //Open/Close - Example: If we purchase 10 units (tx_id: 1) we mark that status of the transaction open.
     //When we sell lets say 5 units, the units will be checked against all open tx_ids and using FIFO, we should close the tx_ids.
-    public $tx_status;
+    public $status;
+
+    public $diff;
+
+    public $cagr;
+
+    public $returns;
 }

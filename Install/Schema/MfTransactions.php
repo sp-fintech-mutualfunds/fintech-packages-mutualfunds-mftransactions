@@ -57,14 +57,6 @@ class MfTransactions
                     ]
                 ),
                 new Column(
-                    'folio_no',
-                    [
-                        'type'          => Column::TYPE_VARCHAR,
-                        'size'          => 100,
-                        'notNull'       => false,
-                    ]
-                ),
-                new Column(
                     'date',
                     [
                         'type'          => Column::TYPE_VARCHAR,
@@ -96,14 +88,36 @@ class MfTransactions
                     ]
                 ),
                 new Column(
-                    'tx_units',
+                    'units_bought',
                     [
                         'type'          => Column::TYPE_FLOAT,
                         'notNull'       => true,
                     ]
                 ),
                 new Column(
-                    'tx_id',
+                    'units_sold',
+                    [
+                        'type'          => Column::TYPE_FLOAT,
+                        'notNull'       => true,
+                    ]
+                ),
+                new Column(
+                    'latest_value',
+                    [
+                        'type'          => Column::TYPE_FLOAT,
+                        'notNull'       => true,
+                    ]
+                ),
+                new Column(
+                    'latest_value_date',
+                    [
+                        'type'          => Column::TYPE_VARCHAR,
+                        'size'          => 15,
+                        'notNull'       => true,
+                    ]
+                ),
+                new Column(
+                    'amc_transaction_id',
                     [
                         'type'          => Column::TYPE_VARCHAR,
                         'size'          => 1024,
@@ -111,11 +125,32 @@ class MfTransactions
                     ]
                 ),
                 new Column(
-                    'tx_status',
+                    'status',
                     [
                         'type'          => Column::TYPE_VARCHAR,
                         'size'          => 10,
                         'notNull'       => true,
+                    ]
+                ),
+                new Column(
+                    'diff',
+                    [
+                        'type'          => Column::TYPE_FLOAT,
+                        'notNull'       => false,
+                    ]
+                ),
+                new Column(
+                    'cagr',
+                    [
+                        'type'          => Column::TYPE_FLOAT,
+                        'notNull'       => false,
+                    ]
+                ),
+                new Column(
+                    'returns',
+                    [
+                        'type'          => Column::TYPE_JSON,
+                        'notNull'       => false,
                     ]
                 )
             ],

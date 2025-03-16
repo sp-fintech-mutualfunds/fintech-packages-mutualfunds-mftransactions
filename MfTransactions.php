@@ -4,6 +4,8 @@ namespace Apps\Fintech\Packages\Mf\Transactions;
 
 use Apps\Fintech\Packages\Accounts\Balances\AccountsBalances;
 use Apps\Fintech\Packages\Mf\Portfolios\Model\AppsFintechMfPortfolios;
+use Apps\Fintech\Packages\Mf\Schemes\MfSchemes;
+use Apps\Fintech\Packages\Mf\Transactions\Financial;
 use Apps\Fintech\Packages\Mf\Transactions\Model\AppsFintechMfTransactions;
 use System\Base\BasePackage;
 
@@ -14,6 +16,17 @@ class MfTransactions extends BasePackage
     protected $packageName = 'mftransactions';
 
     public $mftransactions;
+
+    public $financialClass;
+
+    public function init()
+    {
+        $this->financialClass = new Financial;
+
+        parent::init();
+
+        return $this;
+    }
 
     public function getMfTransactionById($id)
     {
@@ -33,79 +46,28 @@ class MfTransactions extends BasePackage
     {
         $data['account_id'] = $this->access->auth->account()['id'];
 
-        // $usersBalancePackage = $this->usePackage(AccountsBalances::class);
-
         if ($data['type'] === 'buy') {
-            // $userEquity = $usersBalancePackage->getUserEquity($data);
+            $data['status'] = 'open';
 
-            if ($userEquity !== false) {
-                if ((float) $data['amount'] <= $userEquity) {
-                    if ($this->add($data)) {
-                        // $newTransaction = $this->packagesData->last;
+            if ($this->calculateTransactionUnitsAndValues($data)) {
+                if ($this->add($data)) {
+                    $this->recalculatePortfolioTransactions($data);
 
-                        // $data['type'] = 'credit';
+                    $this->addResponse('Ok', 0);
 
-                        // $data['details'] = 'Added via Portfolio ID:' . $data['portfolio_id'] . '. Transaction ID: ' . $newTransaction['id'] . '.';
-
-                        // $data['used_by'] = $newTransaction['id'];
-
-                        // $usersBalancePackage->addAccountsBalances($data);
-
-                        // $newBalance = $usersBalancePackage->packagesData->last;
-
-                        // $newTransaction['tx_id'] = $newBalance['id'];
-
-                        // $this->update($newTransaction);
-
-                        $this->recalculatePortfolioTransactions($data);
-
-                        $this->addResponse('Ok', 0);
-
-                        return true;
-                    }
-                    $this->addResponse('Error adding information, contact developer', 1);
-
-                    return false;
+                    return true;
                 }
 
-                $this->addResponse('User does not have enough equity. Current balance is : ' . $userEquity, 1);
+                $this->addResponse('Error adding transaction', 1);
 
                 return false;
             }
+
+            $this->addResponse('Error getting transaction units', 1);
+
+            return false;
         } else if ($data['type'] === 'sell') {
-            // $amounts = $this->recalculatePortfolioTransactions($data);
-
-            // if ((float) $data['amount'] <= $amounts['equity_balance']) {
-            //     if ($this->add($data)) {
-            //         $newTransaction = $this->packagesData->last;
-
-            //         $data['type'] = 'debit';
-
-            //         $data['details'] = 'Added via Portfolio ID:' . $data['portfolio_id'] . '. Transaction ID: ' . $newTransaction['id'] . '.';
-
-            //         $usersBalancePackage->addAccountsBalances($data);
-
-            //         $newBalance = $usersBalancePackage->packagesData->last;
-
-            //         $newTransaction['tx_id'] = $newBalance['id'];
-
-            //         $this->update($newTransaction);
-
-            //         $this->recalculatePortfolioTransactions($data);
-
-            //         $this->addResponse('Ok', 0);
-
-            //         return true;
-            //     }
-
-            //     $this->addResponse('Error adding information, contact developer', 1);
-
-            //     return false;
-            // }
-
-            // $this->addResponse('Portfolio does not have enough equity. Current balance is : ' . $amounts['equity_balance'], 1);
-
-            // return false;
+            //
         }
 
         $this->addResponse('Cannot obtain user equity information. Contact developer!', 1);
@@ -179,13 +141,53 @@ class MfTransactions extends BasePackage
 
         $transactions = $this->getByParams($conditions);
 
+        $schemesPackage = $this->usepackage(MfSchemes::class);
+
         $buyTotal = 0;
         $sellTotal = 0;
+        $totalValue = 0;
+        $xirrArr = [];
 
         if ($transactions && count($transactions) > 0) {
             foreach ($transactions as $transaction) {
                 if ($transaction['type'] === 'buy') {
                     $buyTotal = $buyTotal + $transaction['amount'];
+
+                    if ($this->config->databasetype === 'db') {
+                        $conditions =
+                            [
+                                'conditions'    => 'amfi_code = :amfi_code:',
+                                'bind'          =>
+                                    [
+                                        'amfi_code'       => (int) $transaction['amfi_code'],
+                                    ]
+                            ];
+                    } else {
+                        $conditions =
+                            [
+                                'conditions'    => ['amfi_code', '=', (int) $transaction['amfi_code']]
+                            ];
+                    }
+
+                    $scheme = $schemesPackage->getByParams($conditions);
+
+                    if ($scheme && isset($scheme[0])) {
+                        $scheme = $schemesPackage->getSchemeById((int) $scheme[0]['id']);
+
+                        $transaction['returns'] = $this->calculateTransactionReturns($scheme, $transaction);
+                        $yearsDiff = (\Carbon\Carbon::parse($transaction['date']))->diffInYears(\Carbon\Carbon::parse($transaction['latest_value_date']));
+                        $transaction['cagr'] = number_format((pow(($transaction['latest_value'] / $transaction['amount']), (1 / $yearsDiff)) - 1) * 100, 2, '.', '');
+                        $transaction['diff'] = number_format($transaction['latest_value'] - $transaction['amount'], 2, '.', '');
+                        $this->update($transaction);
+
+                        $totalValue = $totalValue + $transaction['latest_value'];
+                        if (isset($xirrArr[$this->helper->first($transaction['returns'])['timestamp']])) {
+                            $xirrArr[$this->helper->first($transaction['returns'])['timestamp']] +=
+                                round(-$this->helper->first($transaction['returns'])['return']);
+                        } else {
+                            $xirrArr[$this->helper->first($transaction['returns'])['timestamp']] = round(-$this->helper->first($transaction['returns'])['return']);
+                        }
+                    }
                 } else if ($transaction['type'] === 'sell') {
                     $sellTotal = $sellTotal + $transaction['amount'];
                 }
@@ -193,8 +195,6 @@ class MfTransactions extends BasePackage
         }
 
         $investedAmountTotal = $buyTotal - $sellTotal;
-        // $profitLossTotal = $sellTotal - $buyTotal; This needs to be calculated correctly
-        // $totalValue = This needs to be calculated correctly
 
         $portfolioModel = new AppsFintechMfPortfolios;
 
@@ -208,8 +208,14 @@ class MfTransactions extends BasePackage
 
         if ($portfolio) {
             $portfolio['invested_amount'] = $investedAmountTotal;
-            // $portfolio['total_value'] = ;
-            // $portfolio['profit_loss'] = ;
+            $portfolio['total_value'] = $totalValue;
+
+            if (count($xirrArr) > 0) {
+                $xirrArr = array_reverse($xirrArr, true);
+                $xirrArr[(\Carbon\Carbon::now())->timestamp] = round($portfolio['total_value']);
+
+                $portfolio['xirr'] = number_format($this->financialClass->XIRR(array_values($xirrArr), array_keys($xirrArr)) * 100, 2, '.', '');
+            }
 
             if ($this->config->databasetype === 'db') {
                 $portfolioModel->assign($portfolio);
@@ -228,23 +234,75 @@ class MfTransactions extends BasePackage
                                                                 (new \NumberFormatter('en_IN', \NumberFormatter::CURRENCY))
                                                                     ->formatCurrency($portfolio['invested_amount'], 'en_IN')
                                                                 ),
-                                // 'total_value' => str_replace('EN_ ',
-                                //                                 '',
-                                //                                 (new \NumberFormatter('en_IN', \NumberFormatter::CURRENCY))
-                                //                                     ->formatCurrency($portfolio['total_value'], 'en_IN')
-                                //                                 ),
-                                // 'profit_loss' => str_replace('EN_ ',
-                                //                                 '',
-                                //                                 (new \NumberFormatter('en_IN', \NumberFormatter::CURRENCY))
-                                //                                     ->formatCurrency($portfolio['profit_loss'], 'en_IN')
-                                //                                 )
+                                'total_value' => str_replace('EN_ ',
+                                                                '',
+                                                                (new \NumberFormatter('en_IN', \NumberFormatter::CURRENCY))
+                                                                    ->formatCurrency($totalValue, 'en_IN')
+                                                                ),
+                                'xirr' => $portfolio['xirr']
                             ]
         );
 
         return [
             'invested_amount' => $portfolio['invested_amount'],
-            // 'total_value' => $portfolio['total_value'],
-            // 'profit_loss' => $portfolio['profit_loss'],
+            'total_value' => $totalValue,
+            'xir' => $portfolio['xirr']
         ];
+    }
+
+    protected function calculateTransactionUnitsAndValues(&$data)
+    {
+        $schemesPackage = $this->usepackage(MfSchemes::class);
+
+        $scheme = $schemesPackage->getSchemeById((int) $data['scheme_id']);
+
+        if ($scheme) {
+            $data['amfi_code'] = $scheme['amfi_code'];
+
+            if ($scheme['navs'] && isset($scheme['navs']['navs'][$data['date']])) {
+                $units = $data['amount'] / $scheme['navs']['navs'][$data['date']]['nav'];
+
+                $latestNav = $this->helper->last($scheme['navs']['navs']);
+
+                $data['latest_value_date'] = $latestNav['date'];
+                $data['latest_value'] = round($latestNav['nav'] * $units, 2);
+
+                $data['units_bought'] = (float) number_format(floor($units * pow(10, 3)) / pow(10, 3), 3, '.', '');
+                $data['units_sold'] = 0;
+                $data['returns'] = $this->calculateTransactionReturns($scheme, $data);
+
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public function calculateTransactionReturns($scheme, $transaction)
+    {
+        if (!isset($transaction['returns'])) {
+            $transaction['returns'] = [];
+        }
+
+        $units = $transaction['units_bought'] - $transaction['units_sold'];
+
+        $navs = $scheme['navs']['navs'];
+
+        $navsKeys = array_keys($navs);
+
+        $transactionDateKey = array_search($transaction['date'], $navsKeys);
+
+        $navs = array_slice($navs, $transactionDateKey);
+
+        foreach ($navs as $nav) {
+            if (!isset($transaction['returns'][$nav['date']])) {
+                $transaction['returns'][$nav['date']] = [];
+                $transaction['returns'][$nav['date']]['date'] = $nav['date'];
+                $transaction['returns'][$nav['date']]['timestamp'] = $nav['timestamp'];
+                $transaction['returns'][$nav['date']]['return'] = round($nav['nav'] * $units, 2);
+            }
+        }
+
+        return $transaction['returns'];
     }
 }
