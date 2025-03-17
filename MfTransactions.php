@@ -3,6 +3,7 @@
 namespace Apps\Fintech\Packages\Mf\Transactions;
 
 use Apps\Fintech\Packages\Accounts\Balances\AccountsBalances;
+use Apps\Fintech\Packages\Mf\Portfolios\MfPortfolios;
 use Apps\Fintech\Packages\Mf\Portfolios\Model\AppsFintechMfPortfolios;
 use Apps\Fintech\Packages\Mf\Schemes\MfSchemes;
 use Apps\Fintech\Packages\Mf\Transactions\Financial;
@@ -67,12 +68,169 @@ class MfTransactions extends BasePackage
 
             return false;
         } else if ($data['type'] === 'sell') {
-            //
+            $this->recalculatePortfolioTransactions($data);
+
+            $schemesPackage = $this->usepackage(MfSchemes::class);
+
+            if ($this->config->databasetype === 'db') {
+                $conditions =
+                    [
+                        'conditions'    => 'amfi_code = :amfi_code:',
+                        'bind'          =>
+                            [
+                                'amfi_code'       => (int) $data['amfi_code'],
+                            ]
+                    ];
+            } else {
+                $conditions =
+                    [
+                        'conditions'    => ['amfi_code', '=', (int) $data['amfi_code']]
+                    ];
+            }
+
+            $scheme = $schemesPackage->getByParams($conditions);
+
+            if ($scheme && isset($scheme[0])) {
+                $scheme = $schemesPackage->getSchemeById((int) $scheme[0]['id']);
+            }
+
+            if (!$scheme) {
+                $this->addResponse('Scheme with amfi code not found!', 1);
+
+                return false;
+            }
+
+            $canSellTransactions = [];
+
+            $portfolioPackage = new MfPortfolios;
+
+            $portfolio = $portfolioPackage->getPortfolioById((int) $data['portfolio_id']);
+
+            if ($portfolio && $portfolio['transactions'] && count($portfolio['transactions']) > 0) {
+                foreach ($portfolio['transactions'] as $transaction) {
+                    if ($transaction['amfi_code'] != $data['amfi_code']) {
+                        continue;
+                    }
+
+                    if ($transaction['type'] === 'buy' && $transaction['status'] === 'open') {
+                        $transaction['available_units'] = $transaction['units_bought'];
+
+                        if ($transaction['units_sold'] > 0) {
+                            $transaction['available_units'] = $transaction['units_bought'] - $transaction['units_sold'];
+                        }
+
+                        if (isset($canSellTransactions[$transaction['amfi_code']])) {
+                            $canSellTransactions[$transaction['amfi_code']]['available_units'] += $transaction['available_units'];
+                        } else {
+                            $canSellTransactions[$transaction['amfi_code']] = $transaction;
+                        }
+                    } else {
+                        continue;
+                    }
+
+                    $canSellTransactions[$transaction['amfi_code']]['available_units'] = round($canSellTransactions[$transaction['amfi_code']]['available_units'], 2);
+                    $canSellTransactions[$transaction['amfi_code']]['available_amount'] =
+                        round($canSellTransactions[$transaction['amfi_code']]['available_units'] * $canSellTransactions[$transaction['amfi_code']]['latest_value'], 2);
+                }
+
+                if (isset($canSellTransactions[$data['amfi_code']])) {
+                    if (isset($data['amount'])) {
+                        if ((float) $data['amount'] > $canSellTransactions[$data['amfi_code']]['available_amount']) {
+                            $this->addResponse('Amount exceeds from available amount', 1);
+
+                            return false;
+                        }
+                        //Convert from $data['amount'] to $data['units']
+                        $data['units'] = round($data['amount'] / $scheme['navs']['navs'][$data['date']]['nav'], 3);
+                    } else if (isset($data['units'])) {
+                        if ((float) $data['units'] > $canSellTransactions[$data['amfi_code']]['available_units']) {
+                            $this->addResponse('Units exceeds from available units', 1);
+
+                            return false;
+                        }
+
+                        //Convert from $data['units'] to $data['amount']
+                        $data['amount'] = $data['units'] * $scheme['navs']['navs'][$data['date']]['nav'];
+                    }
+
+                    $data['units_bought'] = 0;
+                    $data['units_sold'] = $data['units'];
+                    $data['latest_value'] = '-';
+                    $data['latest_value_date'] = '-';
+                    $data['cagr'] = '-';
+                    $data['status'] = 'close';
+
+                    if ($this->add($data)) {
+                        $data = array_merge($data, $this->packagesData->last);
+
+                        $buyTransactions = [];
+                        $unitsToProcess = (float) $data['units'];
+
+                        foreach ($portfolio['transactions'] as $transaction) {
+                            if ($unitsToProcess <= 0) {
+                                break;
+                            }
+
+                            if ($transaction['amfi_code'] != $data['amfi_code']) {
+                                continue;
+                            }
+
+                            if ($transaction['type'] === 'buy' && $transaction['status'] === 'open') {
+                                $availableUnits = $transaction['units_bought'] - $transaction['units_sold'];
+
+                                if (isset($data['sell_all']) && $data['sell_all'] == true) {
+                                    $buyTransactions[$transaction['id']]['date'] = $transaction['date'];
+                                    $buyTransactions[$transaction['id']]['units'] = round($availableUnits, 3);
+                                    $buyTransactions[$transaction['id']]['value'] = round($availableUnits * $transaction['returns'][$data['date']]['nav'], 2);
+
+                                    $transaction['units_sold'] = $transaction['units_bought'];
+
+                                    $transaction['status'] = 'close';
+                                } else {
+                                    if ($availableUnits < $unitsToProcess) {
+                                        $transaction['units_sold'] = $transaction['units_bought'];
+
+                                        $buyTransactions[$transaction['id']]['date'] = $transaction['date'];
+                                        $buyTransactions[$transaction['id']]['units'] = round($availableUnits, 3);
+                                        $buyTransactions[$transaction['id']]['value'] = round($availableUnits * $transaction['returns'][$data['date']]['nav'], 2);
+
+                                        $transaction['status'] = 'close';
+                                    } else if ($availableUnits > $unitsToProcess) {
+                                        $transaction['units_sold'] = round($unitsToProcess, 3);
+
+                                        $buyTransactions[$transaction['id']]['date'] = $transaction['date'];
+                                        $buyTransactions[$transaction['id']]['units'] = round($unitsToProcess, 3);
+                                        $buyTransactions[$transaction['id']]['value'] = round($unitsToProcess * $transaction['returns'][$data['date']]['nav'], 2);
+                                    }
+
+                                    $unitsToProcess = $unitsToProcess - $availableUnits;
+                                }
+
+                                $this->update($transaction);
+                            }
+                        }
+
+                        $data['buy_transactions'] = $buyTransactions;
+
+                        if ($this->update($data)) {
+                            $this->recalculatePortfolioTransactions($data);
+
+                            $this->addResponse('Ok', 0);
+
+                            return true;
+                        }
+                    }
+                }
+
+                $this->addResponse('Error: There are no buy transactions with this Scheme.', 1);
+
+                return false;
+            }
+
+            $this->addResponse('Error: There are currently no transactions for this portfolio', 1);
+
+            return false;
         }
-
-        $this->addResponse('Cannot obtain user equity information. Contact developer!', 1);
-
-        return false;
     }
 
     public function updateMfTransaction($data)
@@ -99,26 +257,30 @@ class MfTransactions extends BasePackage
         $mfTransactions = $this->getById($data['id']);
 
         if ($mfTransactions) {
-            if ($mfTransactions['type'] === 'debit' || $mfTransactions['type'] === 'credit') {
-                $usersBalancePackage = $this->usePackage(AccountsBalances::class);
+            if ($mfTransactions['type'] === 'buy') {
+                if ($mfTransactions['status'] !== 'open') {
+                    $this->addResponse('Transaction is being used by other transactions. Cannot remove', 1);
 
-                $userBalance = $usersBalancePackage->getById($mfTransactions['tx_id']);
-
-                if ($userBalance) {
-                    if ($this->remove($mfTransactions['id'])) {
-                        $usersBalancePackage->remove($userBalance['id']);
-                    }
+                    return false;
                 }
 
-                $amounts = $this->recalculatePortfolioTransactions(['portfolio_id' => $mfTransactions['portfolio_id']]);
+                if ($this->remove($mfTransactions['id'])) {
+                    $this->recalculatePortfolioTransactions(['portfolio_id' => $mfTransactions['portfolio_id']]);
 
-                $this->addResponse('Cannot obtain user equity information. Contact developer!', 1);
+                    $this->addResponse('Transaction removed');
 
-                return false;
+                    return true;
+                }
+            } else if ($mfTransactions['type'] === 'sell') {
+                //
             }
+
+            $this->addResponse('Unknown Transaction type. Contact developer!', 1);
+
+            return false;
         }
 
-        $this->addResponse('Error', 1);
+        $this->addResponse('Error, contact developer', 1);
     }
 
     public function recalculatePortfolioTransactions($data)
@@ -139,7 +301,7 @@ class MfTransactions extends BasePackage
                 ];
         }
 
-        $transactions = $this->getByParams($conditions);
+        $transactionsArr = $this->getByParams($conditions);
 
         $schemesPackage = $this->usepackage(MfSchemes::class);
 
@@ -148,8 +310,17 @@ class MfTransactions extends BasePackage
         $totalValue = 0;
         $xirrArr = [];
 
+        //Re arrange with ID as Key.
+        $transactions = [];
+        if ($transactionsArr && count($transactionsArr) > 0) {
+            foreach ($transactionsArr as $transaction) {
+                $transactions[$transaction['id']] = $transaction;
+            }
+        }
+
+        $soldUnits = [];
         if ($transactions && count($transactions) > 0) {
-            foreach ($transactions as $transaction) {
+            foreach ($transactions as $transactionId => $transaction) {
                 if ($transaction['type'] === 'buy') {
                     $buyTotal = $buyTotal + $transaction['amount'];
 
@@ -172,9 +343,11 @@ class MfTransactions extends BasePackage
                     $scheme = $schemesPackage->getByParams($conditions);
 
                     if ($scheme && isset($scheme[0])) {
+                        $transaction['scheme_id'] = (int) $scheme[0]['id'];
                         $scheme = $schemesPackage->getSchemeById((int) $scheme[0]['id']);
+                        $this->calculateTransactionUnitsAndValues($transaction);
 
-                        $transaction['returns'] = $this->calculateTransactionReturns($scheme, $transaction);
+                        // $transaction['returns'] = $this->calculateTransactionReturns($scheme, $transaction);
                         $yearsDiff = (\Carbon\Carbon::parse($transaction['date']))->diffInYears(\Carbon\Carbon::parse($transaction['latest_value_date']));
                         $transaction['cagr'] = number_format((pow(($transaction['latest_value'] / $transaction['amount']), (1 / $yearsDiff)) - 1) * 100, 2, '.', '');
                         $transaction['diff'] = number_format($transaction['latest_value'] - $transaction['amount'], 2, '.', '');
@@ -190,11 +363,34 @@ class MfTransactions extends BasePackage
                     }
                 } else if ($transaction['type'] === 'sell') {
                     $sellTotal = $sellTotal + $transaction['amount'];
+
+                    if (isset($transaction['buy_transactions']) && count($transaction['buy_transactions']) > 0) {
+                        foreach ($transaction['buy_transactions'] as $buyTransactionId => $buyTransaction) {
+                            if (isset($soldUnits[$buyTransactionId])) {
+                                $soldUnits[$buyTransactionId] += $buyTransaction['units'];
+                            } else {
+                                $soldUnits[$buyTransactionId] = $buyTransaction['units'];
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (count($soldUnits) > 0) {
+            foreach ($soldUnits as $transactionId => $soldUnit) {
+                if (isset($transactions[$transactionId])) {
+                    $transactions[$transactionId]['units_sold'] = $soldUnit;
+
+                    $this->update($transactions[$transactionId]);
                 }
             }
         }
 
         $investedAmountTotal = $buyTotal - $sellTotal;
+        if ($investedAmountTotal < 0) {
+            $investedAmountTotal = 0;
+        }
 
         $portfolioModel = new AppsFintechMfPortfolios;
 
@@ -250,28 +446,30 @@ class MfTransactions extends BasePackage
         ];
     }
 
-    protected function calculateTransactionUnitsAndValues(&$data)
+    protected function calculateTransactionUnitsAndValues(&$transaction)
     {
         $schemesPackage = $this->usepackage(MfSchemes::class);
 
-        $scheme = $schemesPackage->getSchemeById((int) $data['scheme_id']);
+        $scheme = $schemesPackage->getSchemeById((int) $transaction['scheme_id']);
 
         if ($scheme) {
-            $data['amfi_code'] = $scheme['amfi_code'];
+            $transaction['amfi_code'] = $scheme['amfi_code'];
 
-            if ($scheme['navs'] && isset($scheme['navs']['navs'][$data['date']])) {
-                $units = $data['amount'] / $scheme['navs']['navs'][$data['date']]['nav'];
+            if ($scheme['navs'] && isset($scheme['navs']['navs'][$transaction['date']])) {
+                $units = $transaction['amount'] / $scheme['navs']['navs'][$transaction['date']]['nav'];
+                $transaction['units_bought'] = (float) number_format(floor($units * pow(10, 3)) / pow(10, 3), 3, '.', '');
+                if (!isset($transaction['units_sold'])) {
+                    $transaction['units_sold'] = 0;
+                }
 
                 $latestNav = $this->helper->last($scheme['navs']['navs']);
 
-                $data['latest_value_date'] = $latestNav['date'];
-                $data['latest_value'] = round($latestNav['nav'] * $units, 2);
+                $transaction['latest_value_date'] = $latestNav['date'];
+                $transaction['latest_value'] = round($latestNav['nav'] * $transaction['units_bought'], 2);
 
-                $data['units_bought'] = (float) number_format(floor($units * pow(10, 3)) / pow(10, 3), 3, '.', '');
-                $data['units_sold'] = 0;
-                $data['returns'] = $this->calculateTransactionReturns($scheme, $data);
+                $transaction['returns'] = $this->calculateTransactionReturns($scheme, $transaction);
 
-                return true;
+                return $transaction;
             }
         }
 
@@ -299,6 +497,7 @@ class MfTransactions extends BasePackage
                 $transaction['returns'][$nav['date']] = [];
                 $transaction['returns'][$nav['date']]['date'] = $nav['date'];
                 $transaction['returns'][$nav['date']]['timestamp'] = $nav['timestamp'];
+                $transaction['returns'][$nav['date']]['nav'] = $nav['nav'];
                 $transaction['returns'][$nav['date']]['return'] = round($nav['nav'] * $units, 2);
             }
         }

@@ -102,6 +102,13 @@ class MfTransactions
                     ]
                 ),
                 new Column(
+                    'buy_transactions',
+                    [
+                        'type'          => Column::TYPE_JSON,
+                        'notNull'       => false,
+                    ]
+                ),
+                new Column(
                     'latest_value',
                     [
                         'type'          => Column::TYPE_FLOAT,

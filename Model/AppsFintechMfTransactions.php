@@ -30,6 +30,8 @@ class AppsFintechMfTransactions extends BaseModel
 
     public $units_sold;
 
+    public $buy_transactions;
+
     public $latest_value;
 
     public $latest_value_date;
