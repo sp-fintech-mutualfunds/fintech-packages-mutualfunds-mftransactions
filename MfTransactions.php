@@ -107,6 +107,8 @@ class MfTransactions extends BasePackage
             $portfolio = $portfolioPackage->getPortfolioById((int) $data['portfolio_id']);
 
             if ($portfolio && $portfolio['transactions'] && count($portfolio['transactions']) > 0) {
+                $portfolio['transactions'] = msort($portfolio['transactions'], 'date');
+
                 foreach ($portfolio['transactions'] as $transaction) {
                     if ($transaction['amfi_code'] != $data['amfi_code']) {
                         continue;
@@ -130,23 +132,27 @@ class MfTransactions extends BasePackage
 
                     $canSellTransactions[$transaction['amfi_code']]['available_units'] = round($canSellTransactions[$transaction['amfi_code']]['available_units'], 2);
                     $canSellTransactions[$transaction['amfi_code']]['available_amount'] =
-                        round($canSellTransactions[$transaction['amfi_code']]['available_units'] * $canSellTransactions[$transaction['amfi_code']]['latest_value'], 2);
+                        round($canSellTransactions[$transaction['amfi_code']]['available_units'] * $canSellTransactions[$transaction['amfi_code']]['returns'][$data['date']]['nav'], 2);
                 }
 
                 if (isset($canSellTransactions[$data['amfi_code']])) {
                     if (isset($data['amount'])) {
                         if ((float) $data['amount'] > $canSellTransactions[$data['amfi_code']]['available_amount']) {
-                            $this->addResponse('Amount exceeds from available amount', 1);
+                            if (!isset($data['sell_all'])) {
+                                $this->addResponse('Amount exceeds from available amount', 1);
 
-                            return false;
+                                return false;
+                            }
                         }
                         //Convert from $data['amount'] to $data['units']
                         $data['units'] = round($data['amount'] / $scheme['navs']['navs'][$data['date']]['nav'], 3);
                     } else if (isset($data['units'])) {
                         if ((float) $data['units'] > $canSellTransactions[$data['amfi_code']]['available_units']) {
-                            $this->addResponse('Units exceeds from available units', 1);
+                            if (!isset($data['sell_all'])) {
+                                $this->addResponse('Units exceeds from available units', 1);
 
-                            return false;
+                                return false;
+                            }
                         }
 
                         //Convert from $data['units'] to $data['amount']
@@ -316,6 +322,8 @@ class MfTransactions extends BasePackage
         //Re arrange with ID as Key.
         $transactions = [];
         if ($transactionsArr && count($transactionsArr) > 0) {
+            $transactionsArr = msort($transactionsArr, 'date');
+
             foreach ($transactionsArr as $transaction) {
                 $transactions[$transaction['id']] = $transaction;
             }
@@ -349,9 +357,7 @@ class MfTransactions extends BasePackage
                         $transaction['scheme_id'] = (int) $scheme[0]['id'];
                         $scheme = $schemesPackage->getSchemeById((int) $scheme[0]['id']);
 
-                        // if ($transaction['status'] === 'open') {
-                            $this->calculateTransactionUnitsAndValues($transaction);
-                        // }
+                        $this->calculateTransactionUnitsAndValues($transaction);
 
                         $yearsDiff = floor((\Carbon\Carbon::parse($transaction['date']))->diffInYears(\Carbon\Carbon::parse($transaction['latest_value_date'])));
                         if ($yearsDiff == 0) {
@@ -364,7 +370,7 @@ class MfTransactions extends BasePackage
                         } else {
                             if ($transaction['status'] === 'open' && $transaction['units_sold'] > 0) {
                                 $totalUnits = round($transaction['units_bought'] - $transaction['units_sold'], 3);
-                                // trace([$totalUnits, ]);
+
                                 $diff = $transaction['latest_value'] - ($scheme['navs']['navs'][$transaction['date']]['nav'] * $totalUnits);//Value on the day of purchase
                                 $cagr = $transaction['latest_value'] / ($scheme['navs']['navs'][$transaction['date']]['nav'] * $totalUnits);
                             } else {
@@ -518,7 +524,7 @@ class MfTransactions extends BasePackage
                 }
 
                 $transaction['returns'] = $this->calculateTransactionReturns($scheme, $transaction);
-                // trace([$transaction]);
+
                 //We calculate the total number of units for latest_value
                 $totalUnits = round($transaction['units_bought'] - $transaction['units_sold'], 3);
 
