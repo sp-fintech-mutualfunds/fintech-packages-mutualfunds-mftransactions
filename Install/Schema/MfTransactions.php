@@ -65,6 +65,14 @@ class MfTransactions
                     ]
                 ),
                 new Column(
+                    'date_closed',
+                    [
+                        'type'          => Column::TYPE_VARCHAR,
+                        'size'          => 15,
+                        'notNull'       => false,
+                    ]
+                ),
+                new Column(
                     'amount',
                     [
                         'type'          => Column::TYPE_FLOAT,

@@ -178,7 +178,7 @@ class MfTransactions extends BasePackage
                             if ($transaction['type'] === 'buy' && $transaction['status'] === 'open') {
                                 $availableUnits = $transaction['units_bought'] - $transaction['units_sold'];
 
-                                if (isset($data['sell_all']) && $data['sell_all'] == true) {
+                                if (isset($data['sell_all']) && $data['sell_all'] == 'true') {
                                     $buyTransactions[$transaction['id']]['date'] = $transaction['date'];
                                     $buyTransactions[$transaction['id']]['units'] = round($availableUnits, 3);
                                     $buyTransactions[$transaction['id']]['value'] = round($availableUnits * $transaction['returns'][$data['date']]['nav'], 2);
@@ -186,8 +186,9 @@ class MfTransactions extends BasePackage
                                     $transaction['units_sold'] = $transaction['units_bought'];
 
                                     $transaction['status'] = 'close';
+                                    $transaction['date_closed'] = $data['date'];
                                 } else {
-                                    if ($availableUnits < $unitsToProcess) {
+                                    if ($availableUnits <= $unitsToProcess) {
                                         $transaction['units_sold'] = $transaction['units_bought'];
 
                                         $buyTransactions[$transaction['id']]['date'] = $transaction['date'];
@@ -195,6 +196,7 @@ class MfTransactions extends BasePackage
                                         $buyTransactions[$transaction['id']]['value'] = round($availableUnits * $transaction['returns'][$data['date']]['nav'], 2);
 
                                         $transaction['status'] = 'close';
+                                        $transaction['date_closed'] = $data['date'];
                                     } else if ($availableUnits > $unitsToProcess) {
                                         $transaction['units_sold'] = round($unitsToProcess, 3);
 
@@ -258,7 +260,7 @@ class MfTransactions extends BasePackage
 
         if ($mfTransactions) {
             if ($mfTransactions['type'] === 'buy') {
-                if ($mfTransactions['status'] !== 'open') {
+                if ($mfTransactions['status'] !== 'open' || $mfTransactions['units_sold'] > 0) {
                     $this->addResponse('Transaction is being used by other transactions. Cannot remove', 1);
 
                     return false;
@@ -308,7 +310,8 @@ class MfTransactions extends BasePackage
         $buyTotal = 0;
         $sellTotal = 0;
         $totalValue = 0;
-        $xirrArr = [];
+        $xirrDatesArr = [];
+        $xirrAmountsArr = [];
 
         //Re arrange with ID as Key.
         $transactions = [];
@@ -320,7 +323,7 @@ class MfTransactions extends BasePackage
 
         $soldUnits = [];
         if ($transactions && count($transactions) > 0) {
-            foreach ($transactions as $transactionId => $transaction) {
+            foreach ($transactions as $transactionId => &$transaction) {
                 if ($transaction['type'] === 'buy') {
                     $buyTotal = $buyTotal + $transaction['amount'];
 
@@ -345,21 +348,40 @@ class MfTransactions extends BasePackage
                     if ($scheme && isset($scheme[0])) {
                         $transaction['scheme_id'] = (int) $scheme[0]['id'];
                         $scheme = $schemesPackage->getSchemeById((int) $scheme[0]['id']);
-                        $this->calculateTransactionUnitsAndValues($transaction);
 
-                        // $transaction['returns'] = $this->calculateTransactionReturns($scheme, $transaction);
-                        $yearsDiff = (\Carbon\Carbon::parse($transaction['date']))->diffInYears(\Carbon\Carbon::parse($transaction['latest_value_date']));
-                        $transaction['cagr'] = number_format((pow(($transaction['latest_value'] / $transaction['amount']), (1 / $yearsDiff)) - 1) * 100, 2, '.', '');
-                        $transaction['diff'] = number_format($transaction['latest_value'] - $transaction['amount'], 2, '.', '');
+                        // if ($transaction['status'] === 'open') {
+                            $this->calculateTransactionUnitsAndValues($transaction);
+                        // }
+
+                        $yearsDiff = floor((\Carbon\Carbon::parse($transaction['date']))->diffInYears(\Carbon\Carbon::parse($transaction['latest_value_date'])));
+                        if ($yearsDiff == 0) {
+                            $yearsDiff = 1;
+                        }
+
+                        if ($transaction['latest_value'] == 0) {
+                            $transaction['cagr'] = 0;
+                            $transaction['diff'] = 0;
+                        } else {
+                            if ($transaction['status'] === 'open' && $transaction['units_sold'] > 0) {
+                                $totalUnits = round($transaction['units_bought'] - $transaction['units_sold'], 3);
+                                // trace([$totalUnits, ]);
+                                $diff = $transaction['latest_value'] - ($scheme['navs']['navs'][$transaction['date']]['nav'] * $totalUnits);//Value on the day of purchase
+                                $cagr = $transaction['latest_value'] / ($scheme['navs']['navs'][$transaction['date']]['nav'] * $totalUnits);
+                            } else {
+                                $diff = $transaction['latest_value'] - $transaction['amount'];
+                                $cagr = $transaction['latest_value'] / $transaction['amount'];
+                            }
+
+                            $transaction['diff'] = number_format($diff, 2, '.', '');
+                            $transaction['cagr'] = number_format((pow(($cagr), (1 / $yearsDiff)) - 1) * 100, 2, '.', '');
+                        }
+
                         $this->update($transaction);
 
                         $totalValue = $totalValue + $transaction['latest_value'];
-                        if (isset($xirrArr[$this->helper->first($transaction['returns'])['timestamp']])) {
-                            $xirrArr[$this->helper->first($transaction['returns'])['timestamp']] +=
-                                round(-$this->helper->first($transaction['returns'])['return']);
-                        } else {
-                            $xirrArr[$this->helper->first($transaction['returns'])['timestamp']] = round(-$this->helper->first($transaction['returns'])['return']);
-                        }
+
+                        array_push($xirrDatesArr, $this->helper->first($transaction['returns'])['timestamp']);
+                        array_push($xirrAmountsArr, round(-$transaction['amount']));
                     }
                 } else if ($transaction['type'] === 'sell') {
                     $sellTotal = $sellTotal + $transaction['amount'];
@@ -373,6 +395,33 @@ class MfTransactions extends BasePackage
                             }
                         }
                     }
+
+                    if ($this->config->databasetype === 'db') {
+                        $conditions =
+                            [
+                                'conditions'    => 'amfi_code = :amfi_code:',
+                                'bind'          =>
+                                    [
+                                        'amfi_code'       => (int) $transaction['amfi_code'],
+                                    ]
+                            ];
+                    } else {
+                        $conditions =
+                            [
+                                'conditions'    => ['amfi_code', '=', (int) $transaction['amfi_code']]
+                            ];
+                    }
+
+                    $scheme = $schemesPackage->getByParams($conditions);
+
+                    if ($scheme && isset($scheme[0])) {
+                        $transaction['scheme_id'] = (int) $scheme[0]['id'];
+                        $this->calculateTransactionUnitsAndValues($transaction);
+                    }
+
+                    array_push($xirrDatesArr, $this->helper->first($transaction['returns'])['timestamp']);
+                    array_push($xirrAmountsArr, round($transaction['amount']));
+                    $totalValue = $totalValue + $transaction['amount'];
                 }
             }
         }
@@ -387,11 +436,6 @@ class MfTransactions extends BasePackage
             }
         }
 
-        $investedAmountTotal = $buyTotal - $sellTotal;
-        if ($investedAmountTotal < 0) {
-            $investedAmountTotal = 0;
-        }
-
         $portfolioModel = new AppsFintechMfPortfolios;
 
         if ($this->config->databasetype === 'db') {
@@ -403,14 +447,18 @@ class MfTransactions extends BasePackage
         }
 
         if ($portfolio) {
-            $portfolio['invested_amount'] = $investedAmountTotal;
+            $portfolio['invested_amount'] = $buyTotal;
+            $portfolio['profit_loss'] = $totalValue - $portfolio['invested_amount'];
             $portfolio['total_value'] = $totalValue;
 
-            if (count($xirrArr) > 0) {
-                $xirrArr = array_reverse($xirrArr, true);
-                $xirrArr[(\Carbon\Carbon::now())->timestamp] = round($portfolio['total_value']);
+            if (count($xirrDatesArr) > 0) {
+                array_push($xirrDatesArr, (\Carbon\Carbon::now())->timestamp);
+                array_push($xirrAmountsArr, round($portfolio['total_value'] - $sellTotal));
 
-                $portfolio['xirr'] = number_format($this->financialClass->XIRR(array_values($xirrArr), array_keys($xirrArr)) * 100, 2, '.', '');
+                $xirrDatesArr = array_reverse($xirrDatesArr, true);
+                $xirrAmountsArr = array_reverse($xirrAmountsArr, true);
+
+                $portfolio['xirr'] = number_format($this->financialClass->XIRR(array_values($xirrAmountsArr), array_values($xirrDatesArr)) * 100, 2, '.', '');
             }
 
             if ($this->config->databasetype === 'db') {
@@ -433,7 +481,12 @@ class MfTransactions extends BasePackage
                                 'total_value' => str_replace('EN_ ',
                                                                 '',
                                                                 (new \NumberFormatter('en_IN', \NumberFormatter::CURRENCY))
-                                                                    ->formatCurrency($totalValue, 'en_IN')
+                                                                    ->formatCurrency($portfolio['total_value'], 'en_IN')
+                                                                ),
+                                'profit_loss' => str_replace('EN_ ',
+                                                                '',
+                                                                (new \NumberFormatter('en_IN', \NumberFormatter::CURRENCY))
+                                                                    ->formatCurrency($portfolio['profit_loss'], 'en_IN')
                                                                 ),
                                 'xirr' => $portfolio['xirr']
                             ]
@@ -441,6 +494,7 @@ class MfTransactions extends BasePackage
 
         return [
             'invested_amount' => $portfolio['invested_amount'],
+            'profit_loss' => $totalValue - $portfolio['invested_amount'],
             'total_value' => $totalValue,
             'xir' => $portfolio['xirr']
         ];
@@ -457,17 +511,22 @@ class MfTransactions extends BasePackage
 
             if ($scheme['navs'] && isset($scheme['navs']['navs'][$transaction['date']])) {
                 $units = $transaction['amount'] / $scheme['navs']['navs'][$transaction['date']]['nav'];
-                $transaction['units_bought'] = (float) number_format(floor($units * pow(10, 3)) / pow(10, 3), 3, '.', '');
+                $transaction['units_bought'] = (float) number_format($units, 3, '.', '');
+
                 if (!isset($transaction['units_sold'])) {
                     $transaction['units_sold'] = 0;
                 }
 
+                $transaction['returns'] = $this->calculateTransactionReturns($scheme, $transaction);
+                // trace([$transaction]);
+                //We calculate the total number of units for latest_value
+                $totalUnits = round($transaction['units_bought'] - $transaction['units_sold'], 3);
+
                 $latestNav = $this->helper->last($scheme['navs']['navs']);
 
                 $transaction['latest_value_date'] = $latestNav['date'];
-                $transaction['latest_value'] = round($latestNav['nav'] * $transaction['units_bought'], 2);
+                $transaction['latest_value'] = round($latestNav['nav'] * $totalUnits, 2);
 
-                $transaction['returns'] = $this->calculateTransactionReturns($scheme, $transaction);
 
                 return $transaction;
             }
@@ -478,11 +537,19 @@ class MfTransactions extends BasePackage
 
     public function calculateTransactionReturns($scheme, $transaction)
     {
+        if ($transaction['status'] === 'close' && isset($transaction['returns']) && count($transaction['returns']) > 0) {
+            return $transaction['returns'];
+        }
+
         if (!isset($transaction['returns'])) {
             $transaction['returns'] = [];
         }
 
-        $units = $transaction['units_bought'] - $transaction['units_sold'];
+        $units = round($transaction['units_bought'] - $transaction['units_sold'], 3);
+
+        if ($units < 0) {
+            $units = 0;
+        }
 
         $navs = $scheme['navs']['navs'];
 
@@ -498,6 +565,7 @@ class MfTransactions extends BasePackage
                 $transaction['returns'][$nav['date']]['date'] = $nav['date'];
                 $transaction['returns'][$nav['date']]['timestamp'] = $nav['timestamp'];
                 $transaction['returns'][$nav['date']]['nav'] = $nav['nav'];
+                $transaction['returns'][$nav['date']]['total_return'] = round($nav['nav'] * $transaction['units_bought'], 2);
                 $transaction['returns'][$nav['date']]['return'] = round($nav['nav'] * $units, 2);
             }
         }

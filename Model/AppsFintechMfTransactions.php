@@ -20,6 +20,8 @@ class AppsFintechMfTransactions extends BaseModel
 
     public $date;
 
+    public $date_closed;
+
     public $amount;
 
     public $type;//Buy/Sell
