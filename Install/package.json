@@ -5,7 +5,7 @@
 	"module_type" : "packages",
 	"app_type" : "fintech",
 	"category" : "mutualfunds",
-	"version" : "0.7.0",
+	"version" : "0.8.0",
 	"repo" : "https://github.com/sp-fintech-mutualfunds/fintech-packages-mutualfunds-mftransactions",
 	"class" : "Apps\\Fintech\\Packages\\Mf\\Transactions\\MfTransactions",
 	"dependencies" : 
