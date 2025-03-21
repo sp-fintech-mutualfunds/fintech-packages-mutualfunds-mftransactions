@@ -202,7 +202,7 @@ class MfTransactions extends BasePackage
                                     $buyTransactions[$transaction['id']]['id'] = $transaction['id'];
                                     $buyTransactions[$transaction['id']]['date'] = $transaction['date'];
                                     $buyTransactions[$transaction['id']]['units'] = round($availableUnits, 3);
-                                    $buyTransactions[$transaction['id']]['value'] = round($availableUnits * $transaction['returns'][$data['date']]['nav'], 2);
+                                    $buyTransactions[$transaction['id']]['amount'] = round($availableUnits * $transaction['returns'][$data['date']]['nav'], 2);
 
                                     $sellTransactions[$data['id']]['id'] = $data['id'];
                                     $sellTransactions[$data['id']]['date'] = $data['date'];
@@ -251,7 +251,7 @@ class MfTransactions extends BasePackage
                                         $transaction['transactions'] = $this->helper->decode($transaction['transactions'], true);
                                     }
 
-                                    $transaction['transactions'] = array_merge($transaction['transactions'], $sellTransactions);
+                                    $transaction['transactions'] = array_replace($transaction['transactions'], $sellTransactions);
                                 } else {
                                     $transaction['transactions'] = $sellTransactions;
                                 }
@@ -285,7 +285,7 @@ class MfTransactions extends BasePackage
 
     public function updateMfTransaction($data)
     {
-        $mfTransaction = $this->getById($data['id']);
+        $mfTransaction = $this->getById((int) $data['id']);
 
         if ($mfTransaction) {
             if ($mfTransaction['type'] === 'buy' &&
@@ -329,25 +329,55 @@ class MfTransactions extends BasePackage
 
     public function removeMfTransaction($data)
     {
-        $mfTransactions = $this->getById($data['id']);
+        $mfTransaction = $this->getById($data['id']);
 
-        if ($mfTransactions) {
-            if ($mfTransactions['type'] === 'buy') {
-                if ($mfTransactions['status'] !== 'open' || $mfTransactions['units_sold'] > 0) {
+        if ($mfTransaction) {
+            if ($mfTransaction['type'] === 'buy') {
+                if ($mfTransaction['status'] !== 'open' || $mfTransaction['units_sold'] > 0) {
                     $this->addResponse('Transaction is being used by other transactions. Cannot remove', 1);
 
                     return false;
                 }
 
-                if ($this->remove($mfTransactions['id'])) {
-                    $this->recalculatePortfolioTransactions(['portfolio_id' => $mfTransactions['portfolio_id']]);
+                if ($this->remove($mfTransaction['id'])) {
+                    $this->recalculatePortfolioTransactions(['portfolio_id' => $mfTransaction['portfolio_id']]);
 
                     $this->addResponse('Transaction removed');
 
                     return true;
                 }
-            } else if ($mfTransactions['type'] === 'sell') {
-                //
+            } else if ($mfTransaction['type'] === 'sell') {
+                if ($mfTransaction['transactions']) {
+                    if (is_string($mfTransaction['transactions'])) {
+                        $mfTransaction['transactions'] = $this->helper->decode($mfTransaction['transactions']);
+                    }
+
+                    if (count($mfTransaction['transactions']) > 0) {
+                        foreach ($mfTransaction['transactions'] as $correspondingTransactionArr) {
+                            $correspondingTransaction = $this->getById((int) $correspondingTransactionArr['id']);
+
+                            if ($correspondingTransaction) {
+                                if ($correspondingTransaction['type'] === 'buy') {
+                                    $correspondingTransaction['status'] = 'open';
+
+                                    $correspondingTransaction['units_sold'] = round($correspondingTransaction['units_sold'] - $correspondingTransactionArr['units'], 3);
+
+                                    unset($correspondingTransaction['transactions'][$mfTransaction['id']]);
+                                }
+                            }
+
+                            $this->update($correspondingTransaction);
+                        }
+                    }
+                }
+
+                if ($this->remove($mfTransaction['id'])) {
+                    $this->recalculatePortfolioTransactions(['portfolio_id' => $mfTransaction['portfolio_id']]);
+
+                    $this->addResponse('Transaction removed');
+
+                    return true;
+                }
             }
 
             $this->addResponse('Unknown Transaction type. Contact developer!', 1);
@@ -537,6 +567,8 @@ class MfTransactions extends BasePackage
                 $xirrAmountsArr = array_reverse($xirrAmountsArr, true);
 
                 $portfolio['xirr'] = number_format($this->financialClass->XIRR(array_values($xirrAmountsArr), array_values($xirrDatesArr)) * 100, 2, '.', '');
+            } else {
+                $portfolio['xirr'] = 0;
             }
 
             if ($this->config->databasetype === 'db') {
