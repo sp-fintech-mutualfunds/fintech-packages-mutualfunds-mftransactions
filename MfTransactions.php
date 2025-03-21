@@ -72,32 +72,42 @@ class MfTransactions extends BasePackage
 
             $schemesPackage = $this->usepackage(MfSchemes::class);
 
-            if ($this->config->databasetype === 'db') {
-                $conditions =
-                    [
-                        'conditions'    => 'amfi_code = :amfi_code:',
-                        'bind'          =>
-                            [
-                                'amfi_code'       => (int) $data['amfi_code'],
-                            ]
-                    ];
-            } else {
-                $conditions =
-                    [
-                        'conditions'    => ['amfi_code', '=', (int) $data['amfi_code']]
-                    ];
-            }
+            if (isset($data['scheme_id']) && $data['scheme_id'] !== '') {
+                $scheme = $schemesPackage->getSchemeById((int) $data['scheme_id']);
 
-            $scheme = $schemesPackage->getByParams($conditions);
+                if (!$scheme) {
+                    $this->addResponse('Scheme with scheme id not found!', 1);
 
-            if ($scheme && isset($scheme[0])) {
-                $scheme = $schemesPackage->getSchemeById((int) $scheme[0]['id']);
-            }
+                    return false;
+                }
+            } else if (isset($data['amfi_code']) && $data['amfi_code'] !== '') {
+                if ($this->config->databasetype === 'db') {
+                    $conditions =
+                        [
+                            'conditions'    => 'amfi_code = :amfi_code:',
+                            'bind'          =>
+                                [
+                                    'amfi_code'       => (int) $data['amfi_code'],
+                                ]
+                        ];
+                } else {
+                    $conditions =
+                        [
+                            'conditions'    => ['amfi_code', '=', (int) $data['amfi_code']]
+                        ];
+                }
 
-            if (!$scheme) {
-                $this->addResponse('Scheme with amfi code not found!', 1);
+                $scheme = $schemesPackage->getByParams($conditions);
 
-                return false;
+                if ($scheme && isset($scheme[0])) {
+                    $scheme = $schemesPackage->getSchemeById((int) $scheme[0]['id']);
+                }
+
+                if (!$scheme) {
+                    $this->addResponse('Scheme with amfi code not found!', 1);
+
+                    return false;
+                }
             }
 
             $canSellTransactions = [];
@@ -106,7 +116,10 @@ class MfTransactions extends BasePackage
 
             $portfolio = $portfolioPackage->getPortfolioById((int) $data['portfolio_id']);
 
-            if ($portfolio && $portfolio['transactions'] && count($portfolio['transactions']) > 0) {
+            if ($portfolio &&
+                $portfolio['transactions'] &&
+                count($portfolio['transactions']) > 0
+            ) {
                 $portfolio['transactions'] = msort($portfolio['transactions'], 'date');
 
                 foreach ($portfolio['transactions'] as $transaction) {
@@ -165,11 +178,12 @@ class MfTransactions extends BasePackage
                     $data['latest_value_date'] = '-';
                     $data['cagr'] = '-';
                     $data['status'] = 'close';
-
+                    // trace([$data]);
                     if ($this->add($data)) {
                         $data = array_merge($data, $this->packagesData->last);
 
                         $buyTransactions = [];
+                        $sellTransactions = [];
                         $unitsToProcess = (float) $data['units'];
 
                         foreach ($portfolio['transactions'] as $transaction) {
@@ -185,9 +199,15 @@ class MfTransactions extends BasePackage
                                 $availableUnits = $transaction['units_bought'] - $transaction['units_sold'];
 
                                 if (isset($data['sell_all']) && $data['sell_all'] == 'true') {
+                                    $buyTransactions[$transaction['id']]['id'] = $transaction['id'];
                                     $buyTransactions[$transaction['id']]['date'] = $transaction['date'];
                                     $buyTransactions[$transaction['id']]['units'] = round($availableUnits, 3);
                                     $buyTransactions[$transaction['id']]['value'] = round($availableUnits * $transaction['returns'][$data['date']]['nav'], 2);
+
+                                    $sellTransactions[$data['id']]['id'] = $data['id'];
+                                    $sellTransactions[$data['id']]['date'] = $data['date'];
+                                    $sellTransactions[$data['id']]['units'] = round($availableUnits, 3);
+                                    $sellTransactions[$data['id']]['amount'] = round($availableUnits * $transaction['returns'][$data['date']]['nav'], 2);
 
                                     $transaction['units_sold'] = $transaction['units_bought'];
 
@@ -197,28 +217,50 @@ class MfTransactions extends BasePackage
                                     if ($availableUnits <= $unitsToProcess) {
                                         $transaction['units_sold'] = $transaction['units_bought'];
 
+                                        $buyTransactions[$transaction['id']]['id'] = $transaction['id'];
                                         $buyTransactions[$transaction['id']]['date'] = $transaction['date'];
                                         $buyTransactions[$transaction['id']]['units'] = round($availableUnits, 3);
-                                        $buyTransactions[$transaction['id']]['value'] = round($availableUnits * $transaction['returns'][$data['date']]['nav'], 2);
+                                        $buyTransactions[$transaction['id']]['amount'] = round($availableUnits * $transaction['returns'][$data['date']]['nav'], 2);
+
+                                        $sellTransactions[$data['id']]['id'] = $data['id'];
+                                        $sellTransactions[$data['id']]['date'] = $data['date'];
+                                        $sellTransactions[$data['id']]['units'] = round($availableUnits, 3);
+                                        $sellTransactions[$data['id']]['amount'] = round($availableUnits * $transaction['returns'][$data['date']]['nav'], 2);
 
                                         $transaction['status'] = 'close';
                                         $transaction['date_closed'] = $data['date'];
                                     } else if ($availableUnits > $unitsToProcess) {
-                                        $transaction['units_sold'] = round($unitsToProcess, 3);
+                                        $transaction['units_sold'] = $transaction['units_sold'] + round($unitsToProcess, 3);
 
+                                        $buyTransactions[$transaction['id']]['id'] = $transaction['id'];
                                         $buyTransactions[$transaction['id']]['date'] = $transaction['date'];
                                         $buyTransactions[$transaction['id']]['units'] = round($unitsToProcess, 3);
-                                        $buyTransactions[$transaction['id']]['value'] = round($unitsToProcess * $transaction['returns'][$data['date']]['nav'], 2);
+                                        $buyTransactions[$transaction['id']]['amount'] = round($unitsToProcess * $transaction['returns'][$data['date']]['nav'], 2);
+
+                                        $sellTransactions[$data['id']]['id'] = $data['id'];
+                                        $sellTransactions[$data['id']]['date'] = $data['date'];
+                                        $sellTransactions[$data['id']]['units'] = round($unitsToProcess, 3);
+                                        $sellTransactions[$data['id']]['amount'] = round($unitsToProcess * $transaction['returns'][$data['date']]['nav'], 2);
                                     }
 
                                     $unitsToProcess = $unitsToProcess - $availableUnits;
+                                }
+
+                                if (isset($transaction['transactions'])) {
+                                    if (is_string($transaction['transactions'])) {
+                                        $transaction['transactions'] = $this->helper->decode($transaction['transactions'], true);
+                                    }
+
+                                    $transaction['transactions'] = array_merge($transaction['transactions'], $sellTransactions);
+                                } else {
+                                    $transaction['transactions'] = $sellTransactions;
                                 }
 
                                 $this->update($transaction);
                             }
                         }
 
-                        $data['buy_transactions'] = $buyTransactions;
+                        $data['transactions'] = $buyTransactions;
 
                         if ($this->update($data)) {
                             $this->recalculatePortfolioTransactions($data);
@@ -243,21 +285,46 @@ class MfTransactions extends BasePackage
 
     public function updateMfTransaction($data)
     {
-        $mfTransactions = $this->getById($data['id']);
+        $mfTransaction = $this->getById($data['id']);
 
-        if ($mfTransactions) {
-            $mfTransactions['date'] = $data['date'];
-            $mfTransactions['amount'] = $data['amount'];
-            $mfTransactions['details'] = $data['details'];
+        if ($mfTransaction) {
+            if ($mfTransaction['type'] === 'buy' &&
+                $mfTransaction['status'] === 'open' &&
+                $mfTransaction['units_sold'] === 0
+            ) {
+                $mfTransaction['date'] = $data['date'];
+                $mfTransaction['amount'] = $data['amount'];
+                $mfTransaction['scheme_id'] = $data['scheme_id'];
+                $mfTransaction['amc_transaction_id'] = $data['amc_transaction_id'];
+                $mfTransaction['details'] = $data['details'];
 
-            if ($this->update($mfTransactions)) {
-                $this->addResponse('Updated transaction');
+                if ($this->calculateTransactionUnitsAndValues($mfTransaction, true)) {
+                    if ($this->update($mfTransaction)) {
+                        $this->recalculatePortfolioTransactions($mfTransaction);
 
-                return;
+                        $this->addResponse('Ok', 0);
+
+                        return true;
+                    }
+
+                    $this->addResponse('Error adding transaction', 1);
+
+                    return false;
+                }
+
+                $this->addResponse('Error getting transaction units', 1);
+
+                return false;
+            } else {
+                $this->addResponse('Transaction is either closed or has units already sold. Cannot update!', 1);
+
+                return false;
             }
-        }
+        } else {
+            $this->addResponse('Transaction is not found!', 1);
 
-        $this->addResponse('Error updating transaction.', 1);
+            return false;
+        }
     }
 
     public function removeMfTransaction($data)
@@ -369,8 +436,13 @@ class MfTransactions extends BasePackage
                             $transaction['diff'] = 0;
                         } else {
                             if ($transaction['status'] === 'open' && $transaction['units_sold'] > 0) {
+                                //The calculation of diff if units_sold is gt 0, example:
+                                //If you buy 10000 (100 units) worth of fund on 1st and sell 5000 worth of fund on the 10th.
+                                //Depending on the price, the number of units will change on the 10th. If the price of NAV per unit went up,
+                                //the number of units worth 5000 will be less than 50 (# of units on the 1st)
+                                //So the calculation will be done with left over units on the 10th which would be higher and
+                                //diff will be taken out comparing the left over units on the 10th with left over units on the 1st
                                 $totalUnits = round($transaction['units_bought'] - $transaction['units_sold'], 3);
-
                                 $diff = $transaction['latest_value'] - ($scheme['navs']['navs'][$transaction['date']]['nav'] * $totalUnits);//Value on the day of purchase
                                 $cagr = $transaction['latest_value'] / ($scheme['navs']['navs'][$transaction['date']]['nav'] * $totalUnits);
                             } else {
@@ -506,7 +578,7 @@ class MfTransactions extends BasePackage
         ];
     }
 
-    protected function calculateTransactionUnitsAndValues(&$transaction)
+    protected function calculateTransactionUnitsAndValues(&$transaction, $update = false)
     {
         $schemesPackage = $this->usepackage(MfSchemes::class);
 
@@ -523,7 +595,7 @@ class MfTransactions extends BasePackage
                     $transaction['units_sold'] = 0;
                 }
 
-                $transaction['returns'] = $this->calculateTransactionReturns($scheme, $transaction);
+                $transaction['returns'] = $this->calculateTransactionReturns($scheme, $transaction, $update);
 
                 //We calculate the total number of units for latest_value
                 $totalUnits = round($transaction['units_bought'] - $transaction['units_sold'], 3);
@@ -541,13 +613,13 @@ class MfTransactions extends BasePackage
         return false;
     }
 
-    public function calculateTransactionReturns($scheme, $transaction)
+    public function calculateTransactionReturns($scheme, $transaction, $update = false)
     {
         if ($transaction['status'] === 'close' && isset($transaction['returns']) && count($transaction['returns']) > 0) {
             return $transaction['returns'];
         }
 
-        if (!isset($transaction['returns'])) {
+        if (!isset($transaction['returns']) || $update) {
             $transaction['returns'] = [];
         }
 

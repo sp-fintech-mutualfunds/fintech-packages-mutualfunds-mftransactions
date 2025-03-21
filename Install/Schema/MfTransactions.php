@@ -110,7 +110,7 @@ class MfTransactions
                     ]
                 ),
                 new Column(
-                    'buy_transactions',
+                    'transactions',
                     [
                         'type'          => Column::TYPE_JSON,
                         'notNull'       => false,
