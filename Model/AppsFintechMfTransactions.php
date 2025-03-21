@@ -32,7 +32,7 @@ class AppsFintechMfTransactions extends BaseModel
 
     public $units_sold;
 
-    public $buy_transactions;
+    public $transactions;//Associated Transactions. For buy, sell transactions. For sell, buy transactions.
 
     public $latest_value;
 
