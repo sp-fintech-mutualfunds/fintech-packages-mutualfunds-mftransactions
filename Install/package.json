@@ -27,7 +27,10 @@
 		{
 			"composer" : 
 			{
-				"require" : []
+				"require" : 
+				{
+					"phpoffice/phpspreadsheet" : "^4.1"
+				}
 			},
 			"config" : 
 			{
