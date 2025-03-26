@@ -129,7 +129,7 @@ class MfTransactions extends BasePackage
                 $portfolio['transactions'] &&
                 count($portfolio['transactions']) > 0
             ) {
-                $portfolio['transactions'] = msort($portfolio['transactions'], 'date');
+                $portfolio['transactions'] = msort(array: $portfolio['transactions'], key: 'date', preserveKey: true);
 
                 foreach ($portfolio['transactions'] as $transaction) {
                     if ($transaction['amfi_code'] != $data['amfi_code']) {
@@ -400,6 +400,7 @@ class MfTransactions extends BasePackage
                             if ($correspondingTransaction) {
                                 if ($correspondingTransaction['type'] === 'buy') {
                                     $correspondingTransaction['status'] = 'open';
+                                    $correspondingTransaction['date_closed'] = null;
 
                                     $correspondingTransaction['units_sold'] = round($correspondingTransaction['units_sold'] - $correspondingTransactionArr['units'], 3);
 
@@ -466,312 +467,386 @@ class MfTransactions extends BasePackage
         $buyTotal = 0;
         $sellTotal = 0;
         $totalValue = 0;
-        $xirrDatesArr = [];
-        $xirrAmountsArr = [];
+        $portfolioXirrDatesArr = [];
+        $portfolioXirrAmountsArr = [];
+        $sellDetails = [];
 
-        //Re arrange with ID as Key.
         $transactions = [];
         if ($transactionsArr && count($transactionsArr) > 0) {
-            $transactionsArr = msort($transactionsArr, 'date');
+            //Re arrange with date
+            $transactionsArr = msort(array: $transactionsArr, key: 'date', preserveKey: true);
 
+            // rearrange with ID as we need this for $sellDetails
             foreach ($transactionsArr as $transaction) {
                 $transactions[$transaction['id']] = $transaction;
             }
         }
 
-        if (isset($data['timelinemode']) && $data['timelinemode'] == true) {
-            $portfolioTimeline = [];
-        }
-
         $portfolioPackage = $this->usepackage(MfPortfolios::class);
         $portfolio = $portfolioPackage->getById((int) $data['portfolio_id']);
 
-        $soldUnits = [];
+        if (!$portfolio) {
+            $this->addResponse('Portfolio not found', 1);
+
+            return false;
+        }
+
         if ($transactions && count($transactions) > 0) {
-            foreach ($transactions as $transactionId => &$transaction) {
-                if ($transaction['type'] === 'buy') {
-                    $buyTotal = $buyTotal + $transaction['amount'];
+            if (isset($data['timeline']) && $data['timeline'] == true) {
+                $portfolioTimeline = [];
 
-                    if ($this->config->databasetype === 'db') {
-                        $conditions =
-                            [
-                                'conditions'    => 'amfi_code = :amfi_code:',
-                                'bind'          =>
-                                    [
-                                        'amfi_code'       => (int) $transaction['amfi_code'],
-                                    ]
-                            ];
-                    } else {
-                        $conditions =
-                            [
-                                'conditions'    => ['amfi_code', '=', (int) $transaction['amfi_code']]
-                            ];
+                $transactionDate = (\Carbon\Carbon::parse($this->helper->first($transactions)['date'])->setTimezone('Asia/Kolkata'))->toDateString();
+
+                while ($transactionDate !== $this->today) {
+                    $buyTotal = 0;
+                    $sellTotal = 0;
+                    $totalValue = 0;
+                    $portfolioXirrDatesArr = [];
+                    $portfolioXirrAmountsArr = [];
+                    $sellDetails = [];
+
+                    $this->processTransactions(
+                        $transactions, $buyTotal, $sellTotal, $schemesPackage, $sellDetails, $data, $totalValue, $portfolioXirrDatesArr, $portfolioXirrAmountsArr, $transactionDate
+                    );
+
+                    $portfolio = $this->getPortfolioNumbers($portfolio, $totalValue, $buyTotal, $sellTotal, $sellDetails, $portfolioXirrDatesArr, $portfolioXirrAmountsArr, $transactionDate);
+                    // if ($transactionDate === '2025-03-14') {
+                    //     trace([$buyTotal, $sellTotal, $sellDetails, $totalValue, $portfolioXirrDatesArr, $portfolioXirrAmountsArr, $transactionDate, $portfolio]);
+                    // }
+
+                    $portfolioTimeline[$transactionDate]['invested_amount'] = $portfolio['invested_amount'];
+                    $portfolioTimeline[$transactionDate]['total_value'] = $portfolio['total_value'];
+                    $portfolioTimeline[$transactionDate]['profit_loss'] = $portfolio['profit_loss'];
+                    $portfolioTimeline[$transactionDate]['xirr'] = $portfolio['xirr'];
+
+                    // if ($transactionDate === '2025-03-22') {
+                    //     trace([$portfolioTimeline]);
+                    // }
+                    $transactionDate = (\Carbon\Carbon::parse($transactionDate)->setTimezone('Asia/Kolkata'))->addDay(1)->toDateString();
+
+                    //Values for Today
+                    if ($transactionDate === $this->today) {
+                        $portfolioTimeline[$transactionDate]['invested_amount'] = $portfolio['invested_amount'];
+                        $portfolioTimeline[$transactionDate]['total_value'] = $portfolio['total_value'];
+                        $portfolioTimeline[$transactionDate]['profit_loss'] = $portfolio['profit_loss'];
+                        $portfolioTimeline[$transactionDate]['xirr'] = $portfolio['xirr'];
                     }
+                }
+                trace([$portfolioTimeline]);
+            } else {
+                $this->processTransactions($transactions, $buyTotal, $sellTotal, $schemesPackage, $sellDetails, $data, $totalValue, $portfolioXirrDatesArr, $portfolioXirrAmountsArr);
 
-                    $scheme = $schemesPackage->getByParams($conditions);
+                if (count($sellDetails) > 0) {
+                    foreach ($sellDetails as $transactionId => $soldUnit) {
+                        if (isset($transactions[$transactionId])) {
+                            $transactions[$transactionId]['units_sold'] = $soldUnit;
 
-                    if ($scheme && isset($scheme[0])) {
-                        $transaction['scheme_id'] = (int) $scheme[0]['id'];
-                        $scheme = $schemesPackage->getSchemeById((int) $scheme[0]['id']);
-
-                        if (isset($data['timelinemode']) && $data['timelinemode'] == true) {
-                            $this->calculateTransactionUnitsAndValues($transaction, false, true);
-                        } else {
-                            $this->calculateTransactionUnitsAndValues($transaction, false, false, $data);
+                            $this->update($transactions[$transactionId]);
                         }
+                    }
+                }
 
-                        $yearsDiff = floor((\Carbon\Carbon::parse($transaction['date']))->diffInYears(\Carbon\Carbon::parse($transaction['latest_value_date'])));
-                        if ($yearsDiff == 0) {
-                            $yearsDiff = 1;
-                        }
+                $portfolio = $this->getPortfolioNumbers($portfolio, $totalValue, $buyTotal, $sellTotal, [], $portfolioXirrDatesArr, $portfolioXirrAmountsArr);
 
-                        if ($transaction['latest_value'] == 0) {
-                            $transaction['cagr'] = 0;
-                            $transaction['diff'] = 0;
-                        } else {
-                            if ($transaction['status'] === 'open' && $transaction['units_sold'] > 0) {
-                                //The calculation of diff if units_sold is gt 0, example:
-                                //If you buy 10000 (100 units) worth of fund on 1st and sell 5000 worth of fund on the 10th.
-                                //Depending on the price, the number of units will change on the 10th. If the price of NAV per unit went up,
-                                //the number of units worth 5000 will be less than 50 (# of units on the 1st)
-                                //So the calculation will be done with left over units on the 10th which would be higher and
-                                //diff will be taken out comparing the left over units on the 10th with left over units on the 1st
-                                $totalUnits = round($transaction['units_bought'] - $transaction['units_sold'], 3);
-                                $diff = $transaction['latest_value'] - ($scheme['navs']['navs'][$transaction['date']]['nav'] * $totalUnits);//Value on the day of purchase
-                                $cagr = $transaction['latest_value'] / ($scheme['navs']['navs'][$transaction['date']]['nav'] * $totalUnits);
+                $portfolioPackage->update($portfolio);
+
+                $returnArr =
+                    [
+                        'invested_amount' => $portfolio['invested_amount'],
+                        'profit_loss' => $portfolio['profit_loss'],
+                        'total_value' => $portfolio['total_value'],
+                        'xir' => $portfolio['xirr']
+                    ];
+
+                $this->addResponse('Recalculated',
+                                   0,
+                                   [
+                                        'invested_amount' => str_replace('EN_ ',
+                                                                        '',
+                                                                        (new \NumberFormatter('en_IN', \NumberFormatter::CURRENCY))
+                                                                            ->formatCurrency($portfolio['invested_amount'], 'en_IN')
+                                                                        ),
+                                        'total_value' => str_replace('EN_ ',
+                                                                        '',
+                                                                        (new \NumberFormatter('en_IN', \NumberFormatter::CURRENCY))
+                                                                            ->formatCurrency($portfolio['total_value'], 'en_IN')
+                                                                        ),
+                                        'profit_loss' => str_replace('EN_ ',
+                                                                        '',
+                                                                        (new \NumberFormatter('en_IN', \NumberFormatter::CURRENCY))
+                                                                            ->formatCurrency($portfolio['profit_loss'], 'en_IN')
+                                                                        ),
+                                        'xirr' => $portfolio['xirr']
+                                    ]
+                );
+
+                return $returnArr;
+            }
+        }
+
+        $this->addResponse('Portfolio has no transactions. Nothing to calculate!', 1);
+
+        return false;
+    }
+
+    protected function processTransactions(
+        &$transactions, &$buyTotal,
+        &$sellTotal, $schemesPackage,
+        &$sellDetails, $data, &$totalValue,
+        &$portfolioXirrDatesArr, &$portfolioXirrAmountsArr,
+        $transactionDate = null
+    ) {
+        foreach ($transactions as $transactionId => &$transaction) {
+            //for Timeline generation, If the transaction has taken place beyond the requested date, we return.
+            if ($transactionDate) {
+                $timelineTransactionDate = (\Carbon\Carbon::parse($transactionDate)->setTimezone('Asia/Kolkata'));
+                $transactionTransactionDate = (\Carbon\Carbon::parse($transaction['date'])->setTimezone('Asia/Kolkata'));
+
+                if ($transactionTransactionDate->gt($timelineTransactionDate)) {
+                    return;
+                }
+
+                // if ($transaction['date_closed']) {
+                //     $transactionDateClosed = (\Carbon\Carbon::parse($transaction['date_closed'])->setTimezone('Asia/Kolkata'));
+
+                //     if ($timelineTransactionDate->gt($transactionDateClosed)) {
+                //         // continue;
+                //     }
+                // }
+            }
+            // var_dump($transactionDate, $transaction);
+
+            if ($transaction['type'] === 'buy') {
+                $buyTotal = $buyTotal + $transaction['amount'];
+
+                if ($this->config->databasetype === 'db') {
+                    $conditions =
+                        [
+                            'conditions'    => 'amfi_code = :amfi_code:',
+                            'bind'          =>
+                                [
+                                    'amfi_code'       => (int) $transaction['amfi_code'],
+                                ]
+                        ];
+                } else {
+                    $conditions =
+                        [
+                            'conditions'    => ['amfi_code', '=', (int) $transaction['amfi_code']]
+                        ];
+                }
+
+                $scheme = $schemesPackage->getByParams($conditions);
+
+                if ($scheme && isset($scheme[0])) {
+                    $transaction['scheme_id'] = (int) $scheme[0]['id'];
+                    $scheme = $schemesPackage->getSchemeById((int) $scheme[0]['id']);
+
+                    $this->calculateTransactionUnitsAndValues($transaction, false, $transactionDate, $data);
+
+                    if ($transaction['latest_value'] == 0) {
+                        $transaction['diff'] = 0;
+                        $transaction['xirr'] = 0;
+                    } else {
+                        if ($transaction['status'] === 'open' && $transaction['units_sold'] > 0) {
+                            //The calculation of diff if units_sold is gt 0, example:
+                            //If you buy 10000 (100 units) worth of fund on 1st and sell 5000 worth of fund on the 10th.
+                            //Depending on the price, the number of units will change on the 10th. If the price of NAV per unit went up,
+                            //the number of units worth 5000 will be less than 50 (# of units on the 1st)
+                            //So the calculation will be done with left over units on the 10th which would be higher and
+                            //diff will be taken out comparing the left over units on the 10th with left over units on the 1st
+                            $totalUnits = round($transaction['units_bought'] - $transaction['units_sold'], 3);
+                            $diff = $transaction['latest_value'] - ($scheme['navs']['navs'][$transaction['date']]['nav'] * $totalUnits);//Value on the day of purchase
+                            $transactionXirrDatesArr = [$this->today, $transaction['date']];
+
+                            $soldAmount = 0;
+                            foreach ($transaction['transactions'] as $soldTransaction) {
+                                $soldAmount = $soldAmount + $soldTransaction['amount'];
+                            }
+                            if ($transaction['amount'] < $soldAmount) {
+                                $soldTransactionAmount = (float) -($transaction['amount'] - $soldAmount);
+
+                                if ($soldTransactionAmount < 0) {
+                                    $soldTransactionAmount = (float) 0;
+                                }
                             } else {
-                                $diff = $transaction['latest_value'] - $transaction['amount'];
-                                $cagr = $transaction['latest_value'] / $transaction['amount'];
+                                $soldTransactionAmount = (float) ($soldAmount - $transaction['amount']);
                             }
 
-                            $transaction['diff'] = round($diff, 2);
-                            $transaction['cagr'] = round((pow(($cagr), (1 / $yearsDiff)) - 1) * 100, 2);
+                            $transactionXirrAmountsArr = [(float) $transaction['latest_value'], $soldTransactionAmount];
+                        } else {
+                            $diff = $transaction['latest_value'] - $transaction['amount'];
+                            $transactionXirrDatesArr = [$this->today, $transaction['date']];
+                            $transactionXirrAmountsArr = [(float) $transaction['latest_value'], (float) -$transaction['amount']];
                         }
 
+                        $transaction['diff'] = round($diff, 2);
+                        $transaction['xirr'] =
+                            round(
+                                (float) \PhpOffice\PhpSpreadsheet\Calculation\Financial\CashFlow\Variable\NonPeriodic::rate(
+                                    array_values($transactionXirrAmountsArr),
+                                    array_values($transactionXirrDatesArr)
+                                ) * 100, 2
+                            );
+                    }
+
+                    if (!$transactionDate) {
                         $this->update($transaction);
-
-                        $totalValue = $totalValue + $transaction['latest_value'];
-
-                        array_push($xirrDatesArr, $this->helper->first($transaction['returns'])['date']);
-                        array_push($xirrAmountsArr, round(-$transaction['amount'], 2));
                     }
-                } else if ($transaction['type'] === 'sell') {
-                    $sellTotal = $sellTotal + $transaction['amount'];
 
-                    if (isset($transaction['buy_transactions']) && count($transaction['buy_transactions']) > 0) {
-                        foreach ($transaction['buy_transactions'] as $buyTransactionId => $buyTransaction) {
-                            if (isset($soldUnits[$buyTransactionId])) {
-                                $soldUnits[$buyTransactionId] += $buyTransaction['units'];
+                    $totalValue = $totalValue + $transaction['latest_value'];
+
+                    array_push($portfolioXirrDatesArr, $this->helper->first($transaction['returns'])['date']);
+                    array_push($portfolioXirrAmountsArr, round(-$transaction['amount'], 2));
+                }
+            } else if ($transaction['type'] === 'sell') {
+                $sellTotal = $sellTotal + $transaction['amount'];
+
+                if ($transactionDate) {
+                    array_push($sellDetails, $transaction['date']);
+                } else {
+                    if (isset($transaction['transactions']) && count($transaction['transactions']) > 0) {
+                        foreach ($transaction['transactions'] as $buyTransactionId => $buyTransaction) {
+                            if (isset($sellDetails[$buyTransactionId])) {
+                                $sellDetails[$buyTransactionId] += $buyTransaction['units'];
                             } else {
-                                $soldUnits[$buyTransactionId] = $buyTransaction['units'];
+                                $sellDetails[$buyTransactionId] = $buyTransaction['units'];
                             }
                         }
                     }
+                }
 
-                    if ($this->config->databasetype === 'db') {
-                        $conditions =
-                            [
-                                'conditions'    => 'amfi_code = :amfi_code:',
-                                'bind'          =>
-                                    [
-                                        'amfi_code'       => (int) $transaction['amfi_code'],
-                                    ]
-                            ];
-                    } else {
-                        $conditions =
-                            [
-                                'conditions'    => ['amfi_code', '=', (int) $transaction['amfi_code']]
-                            ];
-                    }
+                if ($this->config->databasetype === 'db') {
+                    $conditions =
+                        [
+                            'conditions'    => 'amfi_code = :amfi_code:',
+                            'bind'          =>
+                                [
+                                    'amfi_code'       => (int) $transaction['amfi_code'],
+                                ]
+                        ];
+                } else {
+                    $conditions =
+                        [
+                            'conditions'    => ['amfi_code', '=', (int) $transaction['amfi_code']]
+                        ];
+                }
 
-                    $scheme = $schemesPackage->getByParams($conditions);
+                $scheme = $schemesPackage->getByParams($conditions);
 
-                    if ($scheme && isset($scheme[0])) {
-                        $transaction['scheme_id'] = (int) $scheme[0]['id'];
-                        if (isset($data['timelinemode']) && $data['timelinemode'] == true) {
-                            $this->calculateTransactionUnitsAndValues($transaction, false, true);
-                        } else {
-                            $this->calculateTransactionUnitsAndValues($transaction, false, false, $data);
-                        }
-                    }
+                if ($scheme && isset($scheme[0])) {
+                    $transaction['scheme_id'] = (int) $scheme[0]['id'];
+                    $this->calculateTransactionUnitsAndValues($transaction, false, $transactionDate, $data);
+                }
 
+                if (!$transactionDate) {
                     $this->update($transaction);
-
-                    $totalValue = $totalValue + $transaction['amount'];
-
-                    array_push($xirrDatesArr, $this->helper->first($transaction['returns'])['date']);
-                    array_push($xirrAmountsArr, round($transaction['amount'], 2));
                 }
 
-                if (isset($data['timelinemode']) && $data['timelinemode'] == true) {
-                    if ($transaction['returns'] && $transaction['returns'] > 0) {
-                        foreach ($transaction['returns'] as $returnDate => $return) {
-                            if (!isset(($portfolioTimeline[$returnDate]))) {
-                                trace([$portfolioTimeline, $return]);
+                // $totalValue = $totalValue + $transaction['amount'];
 
-                            } else {
-                                if ($transaction['type'] === 'sell') {
-                                    // trace([$portfolioTimeline[$returnDate], $return, $transaction]);
-                                    $portfolioTimeline[$returnDate]['units'] =
-                                        number_format($portfolioTimeline[$returnDate]['units'] - $transaction['units_sold'], 3, '.', '');
-                                    $portfolioTimeline[$returnDate]['total_return'] =
-                                        round((float) $portfolioTimeline[$returnDate]['total_return'] - (float) $transaction['amount'], 2);
-                                    $portfolioTimeline[$returnDate]['calculated_return'] =
-                                        round((float) $portfolioTimeline[$returnDate]['calculated_return'] - (float) $transaction['amount'], 2);
-                                    $portfolioTimeline[$returnDate]['diff'] =
-                                        round((float) $portfolioTimeline[$returnDate]['diff'] - (float) $return['diff'], 2);
-                                    $portfolioTimeline[$returnDate]['cagr'] =
-                                        round((float) $portfolioTimeline[$returnDate]['cagr'] - (float) $return['cagr'], 2);
-                                    // trace([$returnDate, $portfolioTimeline[$returnDate]]);
-                                } else {
-                                    $portfolioTimeline[$returnDate]['units'] =
-                                        number_format($portfolioTimeline[$returnDate]['units'] + $return['units'], 3, '.', '');
-                                    $portfolioTimeline[$returnDate]['total_return'] =
-                                        round((float) $portfolioTimeline[$returnDate]['total_return'] + (float) $return['total_return'], 2);
-                                    $portfolioTimeline[$returnDate]['calculated_return'] =
-                                        round((float) $portfolioTimeline[$returnDate]['calculated_return'] + (float) $return['calculated_return'], 2);
-                                    $portfolioTimeline[$returnDate]['diff'] =
-                                        round((float) $portfolioTimeline[$returnDate]['diff'] + (float) $return['diff'], 2);
-                                    $portfolioTimeline[$returnDate]['cagr'] =
-                                        round((float) $portfolioTimeline[$returnDate]['cagr'] + (float) $return['cagr'], 2);
-                                }
-                            }
-
-                            if (count($xirrDatesArr) > 0) {
-                                $timelineXirrDatesArr = $xirrDatesArr;
-                                $timelineXirrAmountsArr = $xirrAmountsArr;
-
-                                array_push($timelineXirrDatesArr, $return['date']);
-                                array_push($timelineXirrAmountsArr, $portfolioTimeline[$returnDate]['calculated_return']);
-
-                                $timelineXirrDatesArr = array_reverse($timelineXirrDatesArr, true);
-                                $timelineXirrAmountsArr = array_reverse($timelineXirrAmountsArr, true);
-
-                                try {
-                                    $portfolioTimeline[$returnDate]['xirr'] =
-                                        round(
-                                            (float) \PhpOffice\PhpSpreadsheet\Calculation\Financial\CashFlow\Variable\NonPeriodic::rate(
-                                                array_values($timelineXirrAmountsArr),
-                                                array_values($timelineXirrDatesArr)
-                                            ) * 100, 2
-                                        );
-                                } catch (\throwable $e) {
-                                    $portfolioTimeline[$returnDate]['xirr'] = 0;
-                                }
-                            } else {
-                                $portfolioTimeline[$returnDate]['xirr'] = 0;
-                            }
-                        }
-                    }
-                }
+                array_push($portfolioXirrDatesArr, $this->helper->first($transaction['returns'])['date']);
+                array_push($portfolioXirrAmountsArr, round($transaction['amount'], 2));
+            }
+            if ($transactionDate === '2025-03-14') {
+                // var_dump($transaction);
             }
         }
+    }
 
-        if (count($soldUnits) > 0) {
-            foreach ($soldUnits as $transactionId => $soldUnit) {
-                if (isset($transactions[$transactionId])) {
-                    $transactions[$transactionId]['units_sold'] = $soldUnit;
-
-                    $this->update($transactions[$transactionId]);
-                }
-            }
+    protected function getPortfolioNumbers($portfolio, $totalValue, $buyTotal, $sellTotal, $sellDetails, $portfolioXirrDatesArr, $portfolioXirrAmountsArr, $transactionDate = null)
+    {
+        if ($transactionDate === '2025-03-22') {
+            // var_dump([$totalValue, $buyTotal, $sellTotal, $portfolio['total_value'], $portfolio['invested_amount'], $sellDetails]);
         }
+        if ($sellTotal > 0) {
+            $portfolio['invested_amount'] = $buyTotal;
 
-        if ($portfolio) {
-            $portfolio['invested_amount'] = $buyTotal - $sellTotal;
             if ($portfolio['invested_amount'] < 0) {
                 $portfolio['invested_amount'] = 0;
             }
-            // trace([$totalValue, $buyTotal, $sellTotal]);
-            if ($sellTotal > 0) {
-                $portfolio['profit_loss'] = round($totalValue, 2);
-                if ($sellTotal > $buyTotal) {
-                    $portfolio['profit_loss'] = abs($portfolio['profit_loss']);
+
+            if ($sellDetails && count($sellDetails) > 0) {
+                if (in_array($transactionDate, $sellDetails)) {
+                    $totalValue = $totalValue + $sellTotal;
+                }
+            } else {
+                $totalValue = $totalValue + $sellTotal;
+            }
+                    // var_dump($transactionDate, $totalValue);
+
+            $portfolio['profit_loss'] = round($totalValue, 2);
+
+            if ($sellTotal > $buyTotal) {
+                $portfolio['profit_loss'] = abs($portfolio['profit_loss']);
+            } else {
+                if ($totalValue > ($buyTotal + $sellTotal)) {
+                    $portfolio['profit_loss'] = round($totalValue - ($buyTotal + $sellTotal), 2);
                 } else {
                     $portfolio['profit_loss'] = round($totalValue - $buyTotal, 2);
                 }
-                if ($portfolio['invested_amount'] === 0) {
-                    $portfolio['total_value'] = round($sellTotal, 2);
+            }
 
-                    $portfolio['profit_loss'] = round($sellTotal - $buyTotal, 2);
+            if ($portfolio['invested_amount'] === 0) {
+                $portfolio['total_value'] = round($sellTotal, 2);
+
+                $portfolio['profit_loss'] = round($sellTotal - $buyTotal, 2);
+            } else {
+                if ($totalValue >= ($buyTotal + $sellTotal)) {
+                    $portfolio['total_value'] = round($totalValue - $sellTotal, 2);
                 } else {
                     $portfolio['total_value'] = round($totalValue, 2);
                 }
-            } else {
-                $portfolio['profit_loss'] = round($totalValue - $portfolio['invested_amount'], 2);
-
-                $portfolio['total_value'] = round($buyTotal + $portfolio['profit_loss'], 2);
             }
-            // trace([$totalValue, $portfolio['profit_loss'], $portfolio['total_value'], $buyTotal, $sellTotal, $portfolio['invested_amount']]);
-            if (count($xirrDatesArr) > 0) {
-                if ($portfolio['invested_amount'] !== 0) {
-                    array_push($xirrDatesArr, $this->today);
-                    if ($sellTotal > 0) {
-                        array_push($xirrAmountsArr, $totalValue - $sellTotal);
-                    } else {
-                        array_push($xirrAmountsArr, $portfolio['total_value'] - $portfolio['invested_amount']);
-                    }
+        } else {
+            $portfolio['invested_amount'] = $buyTotal - $sellTotal;
+
+            if ($portfolio['invested_amount'] < 0) {
+                $portfolio['invested_amount'] = 0;
+            }
+
+            $portfolio['profit_loss'] = round($totalValue - $portfolio['invested_amount'], 2);
+
+            $portfolio['total_value'] = round($buyTotal + $portfolio['profit_loss'], 2);
+        }
+        if ($transactionDate === '2025-03-22') {
+            // var_dump([$totalValue, $buyTotal, $sellTotal, $portfolio['total_value']]);
+        }
+        // trace([$totalValue, $portfolio['profit_loss'], $portfolio['total_value'], $buyTotal, $sellTotal, $portfolio['invested_amount']]);
+        if (count($portfolioXirrDatesArr) > 0) {
+            if ($portfolio['invested_amount'] !== 0) {
+                if ($transactionDate) {
+                    array_push($portfolioXirrDatesArr, $transactionDate);
+                } else {
+                    array_push($portfolioXirrDatesArr, $this->today);
                 }
-
-                $xirrDatesArr = array_reverse($xirrDatesArr, true);
-                $xirrAmountsArr = array_reverse($xirrAmountsArr, true);
-                // trace([$xirrDatesArr, $xirrAmountsArr]);
-                $portfolio['xirr'] =
-                    round(
-                        (float) \PhpOffice\PhpSpreadsheet\Calculation\Financial\CashFlow\Variable\NonPeriodic::rate(
-                            array_values($xirrAmountsArr),
-                            array_values($xirrDatesArr)
-                        ) * 100, 2
-                    );
-                // trace([$xirrAmountsArr, $xirrDatesArr, $portfolio['xirr']]);
-            } else {
-                $portfolio['xirr'] = 0;
+                if ($sellTotal > 0) {
+                    array_push($portfolioXirrAmountsArr, $totalValue - $sellTotal);
+                } else {
+                    array_push($portfolioXirrAmountsArr, $buyTotal + $portfolio['profit_loss']);
+                }
             }
 
-            // $portfolio['total_value'] = round($portfolio['total_value'] + $sellTotal, 2);
-
-            if (isset($data['timelinemode']) && $data['timelinemode'] == true) {
-                $portfolio['timeline'] = $portfolioTimeline;
-                $portfolio['recalculate_timeline'] = false;
-            }
-
-            $portfolioPackage->update($portfolio);
+            $portfolioXirrDatesArr = array_reverse($portfolioXirrDatesArr, true);
+            $portfolioXirrAmountsArr = array_reverse($portfolioXirrAmountsArr, true);
+            // trace([$portfolioXirrDatesArr, $portfolioXirrAmountsArr]);
+            $portfolio['xirr'] =
+                round(
+                    (float) \PhpOffice\PhpSpreadsheet\Calculation\Financial\CashFlow\Variable\NonPeriodic::rate(
+                        array_values($portfolioXirrAmountsArr),
+                        array_values($portfolioXirrDatesArr)
+                    ) * 100, 2
+                );
+            // trace([$portfolioXirrAmountsArr, $portfolioXirrDatesArr, $portfolio['xirr']]);
+        } else {
+            $portfolio['xirr'] = 0;
         }
 
-        $returnArr =
-            [
-                'invested_amount' => $portfolio['invested_amount'],
-                'profit_loss' => $portfolio['profit_loss'],
-                'total_value' => $portfolio['total_value'],
-                'xir' => $portfolio['xirr']
-            ];
+        // $portfolio['total_value'] = round($portfolio['total_value'] + $sellTotal, 2);
 
-        $this->addResponse('Recalculated',
-                           0,
-                           [
-                                'invested_amount' => str_replace('EN_ ',
-                                                                '',
-                                                                (new \NumberFormatter('en_IN', \NumberFormatter::CURRENCY))
-                                                                    ->formatCurrency($portfolio['invested_amount'], 'en_IN')
-                                                                ),
-                                'total_value' => str_replace('EN_ ',
-                                                                '',
-                                                                (new \NumberFormatter('en_IN', \NumberFormatter::CURRENCY))
-                                                                    ->formatCurrency($portfolio['total_value'], 'en_IN')
-                                                                ),
-                                'profit_loss' => str_replace('EN_ ',
-                                                                '',
-                                                                (new \NumberFormatter('en_IN', \NumberFormatter::CURRENCY))
-                                                                    ->formatCurrency($portfolio['profit_loss'], 'en_IN')
-                                                                ),
-                                'xirr' => $portfolio['xirr']
-                            ]
-        );
-
-        return $returnArr;
+        return $portfolio;
     }
 
-    protected function calculateTransactionUnitsAndValues(&$transaction, $update = false, $timeline = false, $sellTransactionData = null)
+    protected function calculateTransactionUnitsAndValues(&$transaction, $update = false, $transactionDate = null, $sellTransactionData = null)
     {
         $schemesPackage = $this->usepackage(MfSchemes::class);
 
@@ -782,6 +857,7 @@ class MfTransactions extends BasePackage
 
             if ($scheme['navs'] && isset($scheme['navs']['navs'][$transaction['date']])) {
                 $units = $transaction['amount'] / $scheme['navs']['navs'][$transaction['date']]['nav'];
+
                 if ($transaction['type'] === 'buy') {
                     $transaction['units_bought'] = (float) round($units, 3);
                 }
@@ -790,20 +866,51 @@ class MfTransactions extends BasePackage
                     $transaction['units_sold'] = 0;
                 }
 
-                $transaction['returns'] = $this->calculateTransactionReturns($scheme, $transaction, $update, $timeline, $sellTransactionData);
+                $transaction['returns'] = $this->calculateTransactionReturns($scheme, $transaction, $update, $transactionDate, $sellTransactionData);
 
                 //We calculate the total number of units for latest_value
+                if ($transactionDate) {
+                    if (isset($scheme['navs']['navs'][$transactionDate])) {
+                        $lastTransactionNav = $scheme['navs']['navs'][$transactionDate];
+                    } else {
+                        $lastTransactionNav = false;
+                    }
+                } else {
+                    $lastTransactionNav = $this->helper->last($scheme['navs']['navs']);
+                }
+
                 if ($transaction['type'] === 'buy') {
-                    $totalUnits = round($transaction['units_bought'] - $transaction['units_sold'], 3);
+                    if ($transactionDate) {
+                        $totalUnits = round($transaction['units_bought'], 3);
+                        if ($transaction['transactions'] && count($transaction['transactions']) > 0) {
+                            foreach ($transaction['transactions'] as $soldTransaction) {
+                                if ($transactionDate === $soldTransaction['date']) {
+                                    $totalUnits = round($transaction['units_bought'] - $soldTransaction['units'], 3);
+
+                                    break;
+                                }
+                            }
+                        }
+                    } else {
+                        $totalUnits = round($transaction['units_bought'] - $transaction['units_sold'], 3);
+                    }
+
+                    if ($transaction['date_closed'] && !$transactionDate) {
+                        $lastTransactionNav = $scheme['navs']['navs'][$transaction['date_closed']];
+                    }
                 } else {
                     $totalUnits = $transaction['units_sold'];
                 }
 
-                $latestNav = $this->helper->last($scheme['navs']['navs']);
+                if ($lastTransactionNav) {
+                    $latestNav = $lastTransactionNav;
 
-                $transaction['latest_value_date'] = $latestNav['date'];
-                $transaction['latest_value'] = round($latestNav['nav'] * $totalUnits, 2);
-
+                    $transaction['latest_value_date'] = $latestNav['date'];
+                    $transaction['latest_value'] = round($latestNav['nav'] * $totalUnits, 2);
+                } else {
+                    $transaction['latest_value_date'] = 0;
+                    $transaction['latest_value'] = 0;
+                }
 
                 return $transaction;
             }
@@ -812,17 +919,30 @@ class MfTransactions extends BasePackage
         return false;
     }
 
-    public function calculateTransactionReturns($scheme, $transaction, $update = false, $timeline = false, $sellTransactionData = null)
+    public function calculateTransactionReturns($scheme, $transaction, $update = false, $transactionDate = null, $sellTransactionData = null)
     {
-        if ($transaction['status'] === 'close' && isset($transaction['returns']) && count($transaction['returns']) > 0) {
+        if (!$transactionDate && $transaction['status'] === 'close' && isset($transaction['returns']) && count($transaction['returns']) > 0) {
             return $transaction['returns'];
         }
 
-        if (!isset($transaction['returns']) || $update) {
+        if (!isset($transaction['returns']) || $update || $transactionDate) {
             $transaction['returns'] = [];
         }
 
-        $units = round($transaction['units_bought'] - $transaction['units_sold'], 3);
+        if ($transactionDate) {
+            $units = round($transaction['units_bought'], 3);
+            if ($transaction['transactions'] && count($transaction['transactions']) > 0) {
+                foreach ($transaction['transactions'] as $soldTransaction) {
+                    if ($transactionDate === $soldTransaction['date']) {
+                        $units = round($transaction['units_bought'] - $soldTransaction['units'], 3);
+
+                        break;
+                    }
+                }
+            }
+        } else {
+            $units = round($transaction['units_bought'] - $transaction['units_sold'], 3);
+        }
 
         if ($units < 0) {
             $units = 0;
@@ -832,21 +952,32 @@ class MfTransactions extends BasePackage
 
         $navsKeys = array_keys($navs);
 
-        $transactionDateKey = array_search($transaction['date'], $navsKeys);
+        if ($transactionDate) {
+            $transactionDateKey = array_search($transactionDate, $navsKeys);
+        } else {
+            $transactionDateKey = array_search($transaction['date'], $navsKeys);
+        }
 
-        $navs = array_slice($navs, $transactionDateKey);
         $navsToProcess = [];
 
-        if ($timeline) {
-            $navsToProcess = $navs;
-        } else {
+        if ($transactionDate) {
+                if ($transactionDate === '2025-03-22') {
+                    // trace([$transactionDateKey, array_reverse($navs, true)]);
+                }
+            $navs = array_slice($navs, $transactionDateKey, 1);
+
             $navsToProcess[$this->helper->firstKey($navs)] = $this->helper->first($navs);
+        } else {
+            $navs = array_slice($navs, $transactionDateKey);
+
+            $navsToProcess[$this->helper->firstKey($navs)] = $this->helper->first($navs);
+
             if ($sellTransactionData && isset($sellTransactionData['date']) && isset($navs[$sellTransactionData['date']])) {
                 $navsToProcess[$sellTransactionData['date']] = $navs[$sellTransactionData['date']];
             }
+
             $navsToProcess[$this->helper->lastKey($navs)] = $this->helper->last($navs);
         }
-
         $transaction['returns'] = [];
 
         foreach ($navsToProcess as $nav) {
@@ -859,25 +990,24 @@ class MfTransactions extends BasePackage
                 $transaction['returns'][$nav['date']]['units'] = $units;
                 $transaction['returns'][$nav['date']]['total_return'] = round($nav['nav'] * $transaction['units_bought'], 2);
                 $return = $transaction['returns'][$nav['date']]['calculated_return'] = round($nav['nav'] * $units, 2);//Units bought - units sold
-                $diff = $return - $transaction['amount'];
-                $transaction['returns'][$nav['date']]['diff'] = round($diff, 2);
-                $yearsDiff = floor((\Carbon\Carbon::parse($transaction['date']))->diffInYears(\Carbon\Carbon::parse($nav['date'])));
-                if ($yearsDiff == 0) {
-                    $yearsDiff = 1;
-                }
+                $transaction['returns'][$nav['date']]['diff'] = round($return - $transaction['amount'], 2);
 
-                $cagr = ($nav['nav'] * $units) / $transaction['amount'];
-                $transaction['returns'][$nav['date']]['cagr'] = round((pow(($cagr), (1 / $yearsDiff)) - 1) * 100, 2);
+                if ($nav['date'] === $transaction['date_closed']) {
+                    break;
+                }
             } else {
-                $transaction['returns'][$nav['date']]['units'] = $transaction['units_sold'];
+                if ($transactionDate) {
+                    $transaction['returns'][$nav['date']]['units'] = $units;
+                } else {
+                    $transaction['returns'][$nav['date']]['units'] = $transaction['units_sold'];
+                }
                 $transaction['returns'][$nav['date']]['total_return'] = round((float) $transaction['amount'], 2);
                 $return = $transaction['returns'][$nav['date']]['calculated_return'] = round((float) $transaction['amount'], 2);
                 $transaction['returns'][$nav['date']]['diff'] = 0;
-                $transaction['returns'][$nav['date']]['cagr'] = 0;
             }
         }
 
-        $transaction['returns'] = msort($transaction['returns'], 'date');
+        $transaction['returns'] = msort(array: $transaction['returns'], key: 'date', preserveKey: true);
 
         return $transaction['returns'];
     }

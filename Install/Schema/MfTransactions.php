@@ -155,7 +155,7 @@ class MfTransactions
                     ]
                 ),
                 new Column(
-                    'cagr',
+                    'xirr',
                     [
                         'type'          => Column::TYPE_FLOAT,
                         'notNull'       => false,

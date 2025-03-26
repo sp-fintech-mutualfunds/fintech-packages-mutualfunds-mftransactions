@@ -45,7 +45,7 @@ class AppsFintechMfTransactions extends BaseModel
 
     public $diff;
 
-    public $cagr;
+    public $xirr;
 
     public $returns;
 }
