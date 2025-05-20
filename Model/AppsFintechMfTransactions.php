@@ -24,6 +24,8 @@ class AppsFintechMfTransactions extends BaseModel
 
     public $amount;
 
+    public $available_amount;
+
     public $type;//Buy/Sell
 
     public $details;

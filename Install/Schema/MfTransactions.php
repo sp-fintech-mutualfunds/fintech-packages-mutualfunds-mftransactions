@@ -80,6 +80,13 @@ class MfTransactions
                     ]
                 ),
                 new Column(
+                    'available_amount',
+                    [
+                        'type'          => Column::TYPE_FLOAT,
+                        'notNull'       => false,
+                    ]
+                ),
+                new Column(
                     'type',
                     [
                         'type'          => Column::TYPE_VARCHAR,
