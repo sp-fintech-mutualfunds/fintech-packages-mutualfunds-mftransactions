@@ -383,6 +383,12 @@ class MfTransactions extends BasePackage
     {
         $mfTransaction = $this->getById($data['id']);
 
+        if (!$mfTransaction) {
+            $this->addResponse('Id not found', 1);
+
+            return false;
+        }
+
         $this->portfolio = $this->portfoliosPackage->getPortfolioById((int) $mfTransaction['portfolio_id']);
 
         if ($mfTransaction) {
@@ -457,7 +463,7 @@ class MfTransactions extends BasePackage
                 }
 
                 if ($this->remove($mfTransaction['id'])) {
-                    $this->recalculatePortfolio(['portfolio_id' => $mfTransaction['portfolio_id']]);
+                    $this->recalculatePortfolio(['portfolio_id' => $mfTransaction['portfolio_id']], true);
 
                     $this->portfolio['recalculate_timeline'] = true;
 
@@ -731,6 +737,14 @@ class MfTransactions extends BasePackage
                                     $this->investments[$transaction['amfi_code']]['sold_amount'] = 0;
                                 }
                             }
+
+                            $transaction['xirr'] =
+                                numberFormatPrecision(
+                                    (float) \PhpOffice\PhpSpreadsheet\Calculation\Financial\CashFlow\Variable\NonPeriodic::rate(
+                                        array_values($transactionXirrAmountsArr),
+                                        array_values($transactionXirrDatesArr)
+                                    ) * 100, 2
+                                );
                         }
                     }
 
@@ -745,13 +759,6 @@ class MfTransactions extends BasePackage
                     // }
 
                     // $this->totalValue = $this->totalValue + $transaction['latest_value'];
-                    $transaction['xirr'] =
-                        numberFormatPrecision(
-                            (float) \PhpOffice\PhpSpreadsheet\Calculation\Financial\CashFlow\Variable\NonPeriodic::rate(
-                                array_values($transactionXirrAmountsArr),
-                                array_values($transactionXirrDatesArr)
-                            ) * 100, 2
-                        );
                 } else if ($transaction['status'] === 'close') {
                     // $transactionXirrDatesArr = [$transaction['date_closed'], $transaction['date']];
                     // $transactionXirrAmountsArr = [(float) $transaction['returns'][$transaction['date_closed']]['total_return'], (float) -$transaction['amount']];
@@ -851,7 +858,9 @@ class MfTransactions extends BasePackage
                 if (isset($this->portfolio['investments'][$amfiCode])) {
                     $portfolioInvestment = $this->portfolio['investments'][$amfiCode];
 
-                    if (!isset($investment['amount'])) {
+                    if (!isset($investment['amount']) &&
+                        isset($investment['sold_amount'])
+                    ) {
                         if ($portfolioInvestment['status'] === 'open') {
                             $portfolioInvestment['status'] = 'close';
                         }
