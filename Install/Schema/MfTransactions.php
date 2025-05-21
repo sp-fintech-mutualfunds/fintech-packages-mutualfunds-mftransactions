@@ -95,6 +95,14 @@ class MfTransactions
                     ]
                 ),
                 new Column(
+                    'sell_all',
+                    [
+                        'type'          => Column::TYPE_VARCHAR,
+                        'size'          => 10,
+                        'notNull'       => false,
+                    ]
+                ),
+                new Column(
                     'details',
                     [
                         'type'          => Column::TYPE_VARCHAR,

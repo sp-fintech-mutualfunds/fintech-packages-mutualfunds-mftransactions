@@ -28,6 +28,8 @@ class AppsFintechMfTransactions extends BaseModel
 
     public $type;//Buy/Sell
 
+    public $sell_all;//Flag if the sell transaction was sell all units.
+
     public $details;
 
     public $units_bought;
