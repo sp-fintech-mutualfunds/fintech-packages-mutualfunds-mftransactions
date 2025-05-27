@@ -4,6 +4,7 @@ namespace Apps\Fintech\Packages\Mf\Transactions;
 
 use Apps\Fintech\Packages\Mf\Investments\MfInvestments;
 use Apps\Fintech\Packages\Mf\Portfolios\MfPortfolios;
+use Apps\Fintech\Packages\Mf\Portfoliostimeline\MfPortfoliostimeline;
 use Apps\Fintech\Packages\Mf\Schemes\MfSchemes;
 use Apps\Fintech\Packages\Mf\Transactions\Model\AppsFintechMfTransactions;
 use System\Base\BasePackage;
@@ -22,6 +23,8 @@ class MfTransactions extends BasePackage
     {
         $portfoliosPackage = $this->usepackage(MfPortfolios::class);
 
+        $portfoliosTimelinePackage = $this->usepackage(MfPortfoliostimeline::class);
+
         $investmentsPackage = $this->usepackage(MfInvestments::class);
 
         $schemesPackage = $this->usepackage(MfSchemes::class);
@@ -34,19 +37,13 @@ class MfTransactions extends BasePackage
             $data['status'] = 'open';
             $data['user_id'] = $portfolio['user_id'];
             $data['available_amount'] = $data['amount'];
-
             if ($this->calculateTransactionUnitsAndValues($data)) {
                 if ($this->add($data)) {
-                    if (!isset($data['clone'])) {
+                    if (!isset($data['clone']) && !isset($data['via_strategies'])) {
                         $portfoliosPackage->recalculatePortfolio($data, true);
 
-                        if (\Carbon\Carbon::parse($portfolio['start_date'])->gt(\Carbon\Carbon::parse($data['date']))) {
-                            $portfolio['start_date'] = $data['date'];
-                        }
-
-                        $portfoliosPackage->update($portfolio);
+                        $portfoliosTimelinePackage->forceRecalculateTimeline($portfolio, $data['date']);
                     }
-
 
                     $this->addResponse('Ok', 0);
 
@@ -62,7 +59,7 @@ class MfTransactions extends BasePackage
 
             return false;
         } else if ($data['type'] === 'sell') {
-            $schemesPackage->getSchemeFromAmfiCodeOrSchemeId($data);
+            $this->scheme = $schemesPackage->getSchemeFromAmfiCodeOrSchemeId($data);
 
             if (!$this->scheme) {
                 $this->addResponse('Scheme with id/amfi code not found!', 1);
@@ -260,7 +257,7 @@ class MfTransactions extends BasePackage
                         $data['transactions'] = $buyTransactions;
 
                         if ($this->update($data)) {
-                            if (!isset($data['clone'])) {
+                            if (!isset($data['clone']) && !isset($data['via_strategies'])) {
                                 $portfolio['investments'][$data['amfi_code']]['units'] =
                                     $portfolio['investments'][$data['amfi_code']]['units'] - $data['units'];
 
@@ -271,11 +268,9 @@ class MfTransactions extends BasePackage
                                 $investmentsPackage->update($portfolio['investments'][$data['amfi_code']]);
 
                                 $portfoliosPackage->recalculatePortfolio($data, true);
+
+                                $portfoliosTimelinePackage->forceRecalculateTimeline($portfolio, $data['date']);
                             }
-
-                            // $portfolio['recalculate_timeline'] = true;
-
-                            // $portfoliosPackage->update($portfolio);
 
                             $this->addResponse('Ok', 0);
 
@@ -295,11 +290,15 @@ class MfTransactions extends BasePackage
         }
 
         $this->addResponse('Added transaction');
+
+        return true;
     }
 
     public function updateMfTransaction($data)
     {
         $portfoliosPackage = $this->usepackage(MfPortfolios::class);
+
+        $portfoliosTimelinePackage = $this->usepackage(MfPortfoliostimeline::class);
 
         $mfTransaction = $this->getById((int) $data['id']);
 
@@ -310,6 +309,7 @@ class MfTransactions extends BasePackage
                 $mfTransaction['status'] === 'open' &&
                 $mfTransaction['units_sold'] === 0
             ) {
+                $mfTransactionOriginalDate = $mfTransaction['date'];
                 $mfTransaction['date'] = $data['date'];
                 $mfTransaction['amount'] = $data['amount'];
                 $mfTransaction['scheme_id'] = $data['scheme_id'];
@@ -320,8 +320,13 @@ class MfTransactions extends BasePackage
                     if ($this->update($mfTransaction)) {
                         $portfoliosPackage->recalculatePortfolio($mfTransaction, true);
 
-                        // $portfolio['recalculate_timeline'] = true;
-                        // $portfoliosPackage->update($portfolio);
+                        $transactionDate = $mfTransactionOriginalDate;
+
+                        if (\Carbon\Carbon::parse($data['date'])->lt(\Carbon\Carbon::parse($mfTransactionOriginalDate))) {
+                            $transactionDate = $data['date'];
+                        }
+
+                        $portfoliosTimelinePackage->forceRecalculateTimeline($portfolio, $transactionDate);
 
                         $this->addResponse('Ok', 0);
 
@@ -353,6 +358,8 @@ class MfTransactions extends BasePackage
     public function removeMfTransaction($data)
     {
         $portfoliosPackage = $this->usepackage(MfPortfolios::class);
+
+        $portfoliosTimelinePackage = $this->usepackage(MfPortfoliostimeline::class);
 
         $investmentsPackage = $this->usepackage(MfInvestments::class);
 
@@ -386,7 +393,11 @@ class MfTransactions extends BasePackage
 
                     unset($portfolio['transactions'][$mfTransaction['id']]);
 
-                    $portfoliosPackage->recalculatePortfolio(['portfolio_id' => $mfTransaction['portfolio_id']]);
+                    $portfoliosPackage->update($portfolio);
+
+                    $portfoliosPackage->recalculatePortfolio($mfTransaction);
+
+                    $portfoliosTimelinePackage->forceRecalculateTimeline($portfolio, $mfTransaction['date']);
 
                     $this->addResponse('Transaction removed');
 
@@ -429,7 +440,9 @@ class MfTransactions extends BasePackage
                 if ($this->remove($mfTransaction['id'])) {
                     $portfoliosPackage->update($portfolio);
 
-                    $portfoliosPackage->recalculatePortfolio(['portfolio_id' => $mfTransaction['portfolio_id']], true);
+                    $portfoliosPackage->recalculatePortfolio($mfTransaction, true);
+
+                    $portfoliosTimelinePackage->forceRecalculateTimeline($portfolio, $data['date']);
 
                     $this->addResponse('Transaction removed');
 
@@ -445,7 +458,7 @@ class MfTransactions extends BasePackage
         $this->addResponse('Error, contact developer', 1);
     }
 
-    public function calculateTransactionUnitsAndValues(&$transaction, $update = false, &$timelineDate = null, $sellTransactionData = null)
+    public function calculateTransactionUnitsAndValues(&$transaction, $update = false, $timelineDate = null, $sellTransactionData = null)
     {
         $schemesPackage = $this->usepackage(MfSchemes::class);
 
@@ -489,7 +502,7 @@ class MfTransactions extends BasePackage
         return false;
     }
 
-    public function calculateTransactionReturns($transaction, $update = false, &$timelineDate = null, $sellTransactionData = null)
+    public function calculateTransactionReturns($transaction, $update = false, $timelineDate = null, $sellTransactionData = null)
     {
         if (!$timelineDate && $transaction['status'] === 'close') {
             return $transaction['returns'];
