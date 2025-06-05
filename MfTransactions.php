@@ -442,7 +442,7 @@ class MfTransactions extends BasePackage
 
                     $portfoliosPackage->recalculatePortfolio($mfTransaction, true);
 
-                    $portfoliosTimelinePackage->forceRecalculateTimeline($portfolio, $data['date']);
+                    $portfoliosTimelinePackage->forceRecalculateTimeline($portfolio, $mfTransaction['date']);
 
                     $this->addResponse('Transaction removed');
 
@@ -458,14 +458,19 @@ class MfTransactions extends BasePackage
         $this->addResponse('Error, contact developer', 1);
     }
 
-    public function calculateTransactionUnitsAndValues(&$transaction, $update = false, $timelineDate = null, $sellTransactionData = null)
+    public function calculateTransactionUnitsAndValues(&$transaction, $update = false, $timeline = null, $sellTransactionData = null)
     {
         $schemesPackage = $this->usepackage(MfSchemes::class);
 
-        $this->scheme = $schemesPackage->getSchemeFromAmfiCodeOrSchemeId($transaction);
+        if ($timeline && isset($timeline->portfolioSchemes[$transaction['amfi_code']])) {
+            $this->scheme = $timeline->portfolioSchemes[$transaction['amfi_code']];
+        } else {
+            $this->scheme = $schemesPackage->getSchemeFromAmfiCodeOrSchemeId($transaction);
+        }
 
         if ($this->scheme) {
             $transaction['amfi_code'] = $this->scheme['amfi_code'];
+            $transaction['amc_id'] = $this->scheme['amc_id'];
 
             if ($this->scheme['navs'] && isset($this->scheme['navs']['navs'][$transaction['date']])) {
                 $units = (float) $transaction['amount'] / $this->scheme['navs']['navs'][$transaction['date']]['nav'];
@@ -478,11 +483,11 @@ class MfTransactions extends BasePackage
                     $transaction['units_sold'] = 0;
                 }
 
-                $transaction['returns'] = $this->calculateTransactionReturns($transaction, $update, $timelineDate, $sellTransactionData);
+                $transaction['returns'] = $this->calculateTransactionReturns($transaction, $update, $timeline, $sellTransactionData);
 
                 //We calculate the total number of units for latest_value
-                if ($timelineDate) {
-                    $lastTransactionNav = $transaction['returns'][$timelineDate];
+                if ($timeline && $timeline->timelineDateBeingProcessed) {
+                    $lastTransactionNav = $transaction['returns'][$timeline->timelineDateBeingProcessed];
                 } else {
                     $lastTransactionNav = $this->helper->last($transaction['returns']);
                 }
@@ -502,24 +507,24 @@ class MfTransactions extends BasePackage
         return false;
     }
 
-    public function calculateTransactionReturns($transaction, $update = false, $timelineDate = null, $sellTransactionData = null)
+    public function calculateTransactionReturns($transaction, $update = false, $timeline = null, $sellTransactionData = null)
     {
-        if (!$timelineDate && $transaction['status'] === 'close') {
+        if (!$timeline && $transaction['status'] === 'close') {
             return $transaction['returns'];
         }
 
-        if (!isset($transaction['returns']) || $update || $timelineDate) {
+        if (!isset($transaction['returns']) || $update || $timeline) {
             $transaction['returns'] = [];
         }
 
         if ($transaction['type'] === 'buy') {
-            if ($timelineDate) {
+            if ($timeline) {
                 $units = numberFormatPrecision($transaction['units_bought'], 3);
 
                 //Check this for timeline!!
                 if ($transaction['transactions'] && count($transaction['transactions']) > 0) {
                     foreach ($transaction['transactions'] as $soldTransaction) {
-                        if ($timelineDate === $soldTransaction['date']) {
+                        if ($timeline->timelineDateBeingProcessed === $soldTransaction['date']) {
                             $units = numberFormatPrecision($transaction['units_bought'] - $soldTransaction['units'], 3);
 
                             break;
@@ -541,14 +546,14 @@ class MfTransactions extends BasePackage
         $navsKeys = array_keys($navs);
         $navsToProcess = [];
 
-        if ($timelineDate) {
-            if (!isset($navs[$timelineDate])) {
-                $timelineDate = $this->helper->last($navs)['date'];
+        if ($timeline && $timeline->timelineDateBeingProcessed) {
+            if (!isset($navs[$timeline->timelineDateBeingProcessed])) {
+                $timeline->timelineDateBeingProcessed = $this->helper->last($navs)['date'];
             }
 
             $navsToProcess[$transaction['date']] = $navs[$transaction['date']];
 
-            $navsToProcess[$timelineDate] = $navs[$timelineDate];
+            $navsToProcess[$timeline->timelineDateBeingProcessed] = $navs[$timeline->timelineDateBeingProcessed];
         } else {
             $transactionDateKey = array_search($transaction['date'], $navsKeys);
 
