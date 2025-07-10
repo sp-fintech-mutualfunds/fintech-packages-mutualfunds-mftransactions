@@ -458,12 +458,14 @@ class MfTransactions extends BasePackage
         $this->addResponse('Error, contact developer', 1);
     }
 
-    public function calculateTransactionUnitsAndValues(&$transaction, $update = false, $timeline = null, $sellTransactionData = null)
+    public function calculateTransactionUnitsAndValues(&$transaction, $update = false, $timeline = null, $sellTransactionData = null, $schemes = null)
     {
         $schemesPackage = $this->usepackage(MfSchemes::class);
 
         if ($timeline && isset($timeline->portfolioSchemes[$transaction['amfi_code']])) {
             $this->scheme = $timeline->portfolioSchemes[$transaction['amfi_code']];
+        } else if ($schemes && isset($schemes[$transaction['amfi_code']])) {
+            $this->scheme = $schemes[$transaction['amfi_code']];
         } else {
             $this->scheme = $schemesPackage->getSchemeFromAmfiCodeOrSchemeId($transaction);
         }
