@@ -39,7 +39,7 @@ class MfTransactions
                     'portfolio_id',
                     [
                         'type'          => Column::TYPE_INTEGER,
-                        'notNull'       => false,
+                        'notNull'       => true,
                     ]
                 ),
                 new Column(
@@ -197,7 +197,10 @@ class MfTransactions
             new Index(
                 'column_INDEX',
                 [
-                    'account_id'
+                    'account_id',
+                    'user_id',
+                    'portfolio_id',
+                    'amfi_code'
                 ],
                 'INDEX'
             )
