@@ -16,7 +16,7 @@ class AppsFintechMfTransactions extends BaseModel
 
     public $amc_id;
 
-    public $amfi_code;
+    public $scheme_id;
 
     public $date;
 

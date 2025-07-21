@@ -50,7 +50,7 @@ class MfTransactions
                     ]
                 ),
                 new Column(
-                    'amfi_code',
+                    'scheme_id',
                     [
                         'type'          => Column::TYPE_INTEGER,
                         'notNull'       => false,
@@ -199,8 +199,7 @@ class MfTransactions
                 [
                     'account_id',
                     'user_id',
-                    'portfolio_id',
-                    'amfi_code'
+                    'portfolio_id'
                 ],
                 'INDEX'
             )
