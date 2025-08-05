@@ -7,6 +7,9 @@ use Apps\Fintech\Packages\Mf\Portfolios\MfPortfolios;
 use Apps\Fintech\Packages\Mf\Portfoliostimeline\MfPortfoliostimeline;
 use Apps\Fintech\Packages\Mf\Schemes\MfSchemes;
 use Apps\Fintech\Packages\Mf\Transactions\Model\AppsFintechMfTransactions;
+use League\Flysystem\FilesystemException;
+use League\Flysystem\UnableToCheckExistence;
+use League\Flysystem\UnableToReadFile;
 use System\Base\BasePackage;
 
 class MfTransactions extends BasePackage
@@ -19,6 +22,8 @@ class MfTransactions extends BasePackage
 
     protected $scheme;
 
+    protected $schemesPackage;
+
     public function addMfTransaction($data)
     {
         $portfoliosPackage = $this->usepackage(MfPortfolios::class);
@@ -27,7 +32,7 @@ class MfTransactions extends BasePackage
 
         $investmentsPackage = $this->usepackage(MfInvestments::class);
 
-        $schemesPackage = $this->usepackage(MfSchemes::class);
+        $this->schemesPackage = $this->usepackage(MfSchemes::class);
 
         $data['account_id'] = $this->access->auth->account()['id'];
 
@@ -67,7 +72,7 @@ class MfTransactions extends BasePackage
 
             return false;
         } else if ($data['type'] === 'sell') {
-            $this->scheme = $schemesPackage->getSchemeFromAmfiCodeOrSchemeId($data);
+            $this->scheme = $this->schemesPackage->getSchemeFromAmfiCodeOrSchemeId($data);
 
             if (!$this->scheme) {
                 $this->addResponse('Scheme with id not found!', 1);
@@ -86,7 +91,7 @@ class MfTransactions extends BasePackage
                 $portfolio['transactions'] = msort(array: $portfolio['transactions'], key: 'date', preserveKey: true);
 
                 foreach ($portfolio['transactions'] as $transaction) {
-                    if ($transaction['scheme_id'] != $this->scheme['scheme_id']) {
+                    if ($transaction['scheme_id'] != $this->scheme['id']) {
                         continue;
                     }
 
@@ -128,9 +133,9 @@ class MfTransactions extends BasePackage
                         );
                 }
                 // trace([$canSellTransactions]);
-                if (isset($canSellTransactions[$this->scheme['scheme_id']])) {
+                if (isset($canSellTransactions[$this->scheme['id']])) {
                     if (isset($data['amount'])) {
-                        if ((float) $data['amount'] > $canSellTransactions[$this->scheme['scheme_id']]['available_amount']) {
+                        if ((float) $data['amount'] > $canSellTransactions[$this->scheme['id']]['available_amount']) {
                             if (!isset($data['sell_all']) ||
                                 (isset($data['sell_all']) && $data['sell_all'] == 'false')
                             ) {
@@ -139,14 +144,14 @@ class MfTransactions extends BasePackage
                                 return false;
                             }
 
-                            $data['units'] = $canSellTransactions[$this->scheme['scheme_id']]['available_units'];
-                            $data['amount'] = $canSellTransactions[$this->scheme['scheme_id']]['available_amount'];
+                            $data['units'] = $canSellTransactions[$this->scheme['id']]['available_units'];
+                            $data['amount'] = $canSellTransactions[$this->scheme['id']]['available_amount'];
                         } else {
                             //Convert from $data['amount'] to $data['units']
                             $data['units'] = numberFormatPrecision($data['amount'] / $this->scheme['navs']['navs'][$data['date']]['nav'], 3);
                         }
                     } else if (isset($data['units'])) {
-                        if ((float) $data['units'] > $canSellTransactions[$this->scheme['scheme_id']]['available_units']) {
+                        if ((float) $data['units'] > $canSellTransactions[$this->scheme['id']]['available_units']) {
                             if (!isset($data['sell_all']) ||
                                 (isset($data['sell_all']) && $data['sell_all'] == 'false')
                             ) {
@@ -155,8 +160,8 @@ class MfTransactions extends BasePackage
                                 return false;
                             }
 
-                            $data['units'] = $canSellTransactions[$this->scheme['scheme_id']]['available_units'];
-                            $data['amount'] = $canSellTransactions[$this->scheme['scheme_id']]['available_amount'];
+                            $data['units'] = $canSellTransactions[$this->scheme['id']]['available_units'];
+                            $data['amount'] = $canSellTransactions[$this->scheme['id']]['available_amount'];
                         } else {
                             //Convert from $data['units'] to $data['amount']
                             $data['amount'] = $data['units'] * $this->scheme['navs']['navs'][$data['date']]['nav'];
@@ -170,7 +175,7 @@ class MfTransactions extends BasePackage
                     $data['xirr'] = '-';
                     $data['status'] = 'close';
                     $data['user_id'] = $portfolio['user_id'];
-                    $data['scheme_id'] = $this->scheme['scheme_id'];
+                    $data['scheme_id'] = $this->scheme['id'];
                     $data['amc_id'] = $this->scheme['amc_id'];
                     $data['date_closed'] = $data['date'];
 
@@ -191,7 +196,7 @@ class MfTransactions extends BasePackage
                                     continue;
                                 }
 
-                                if ($transaction['scheme_id'] != $this->scheme['scheme_id']) {
+                                if ($transaction['scheme_id'] != $this->scheme['id']) {
                                     continue;
                                 }
 
@@ -484,52 +489,64 @@ class MfTransactions extends BasePackage
 
     public function calculateTransactionUnitsAndValues(&$transaction, $update = false, $timeline = null, $sellTransactionData = null, $schemes = null)
     {
-        $schemesPackage = $this->usepackage(MfSchemes::class);
+        $this->schemesPackage = $this->usepackage(MfSchemes::class);
 
         if ($timeline && isset($timeline->portfolioSchemes[$transaction['scheme_id']])) {
-            $this->scheme = $timeline->portfolioSchemes[$transaction['scheme_id']];
+            $this->scheme = &$timeline->portfolioSchemes[$transaction['scheme_id']];
         } else if ($schemes && isset($schemes[$transaction['scheme_id']])) {
-            $this->scheme = $schemes[$transaction['scheme_id']];
+            $this->scheme = &$schemes[$transaction['scheme_id']];
         } else {
-            $this->scheme = $schemesPackage->getSchemeFromAmfiCodeOrSchemeId($transaction);
+            $this->scheme = $this->schemesPackage->getSchemeFromAmfiCodeOrSchemeId($transaction);
         }
 
         if ($this->scheme) {
-            $transaction['scheme_id'] = $this->scheme['scheme_id'];
+            $transaction['scheme_id'] = $this->scheme['id'];
             $transaction['amc_id'] = $this->scheme['amc_id'];
 
-            if ($this->scheme['navs'] && isset($this->scheme['navs']['navs'][$transaction['date']])) {
-                $transaction['nav'] = $this->scheme['navs']['navs'][$transaction['date']]['nav'];
+            if (!isset($this->scheme['navs']['navs'][$transaction['date']])) {
+                if (!$this->scheme['navs']['navs'][$transaction['date']] = $this->schemesPackage->getSchemeNavByDate($this->scheme, $transaction['date'])) {
+                    $this->addResponse(
+                        $this->schemesPackage->packagesData->responseMessage,
+                        $this->schemesPackage->packagesData->responseCode,
+                        $this->schemesPackage->packagesData->responseData ?? []
+                    );
 
-                $units = (float) $transaction['amount'] / $transaction['nav'];
-
-                if ($transaction['type'] === 'buy') {
-                    $transaction['units_bought'] = numberFormatPrecision($units, 3);
+                    return false;
                 }
-
-                if (!isset($transaction['units_sold'])) {
-                    $transaction['units_sold'] = 0;
-                }
-
-                $transaction['returns'] = $this->calculateTransactionReturns($transaction, $update, $timeline, $sellTransactionData);
-
-                //We calculate the total number of units for latest_value
-                if ($timeline && $timeline->timelineDateBeingProcessed) {
-                    $lastTransactionNav = $transaction['returns'][$timeline->timelineDateBeingProcessed];
-                } else {
-                    $lastTransactionNav = $this->helper->last($transaction['returns']);
-                }
-
-                if ($lastTransactionNav) {
-                    $transaction['latest_value_date'] = $lastTransactionNav['date'];
-                    $transaction['latest_value'] = $lastTransactionNav['total_return'];
-                } else {
-                    $transaction['latest_value_date'] = 0;
-                    $transaction['latest_value'] = 0;
-                }
-
-                return $transaction;
             }
+
+            // if ($this->scheme['navs'] && isset($this->scheme['navs']['navs'][$transaction['date']])) {
+            $transaction['nav'] = $this->scheme['navs']['navs'][$transaction['date']]['nav'];
+
+            $units = (float) $transaction['amount'] / $transaction['nav'];
+
+            if ($transaction['type'] === 'buy') {
+                $transaction['units_bought'] = numberFormatPrecision($units, 3);
+            }
+
+            if (!isset($transaction['units_sold'])) {
+                $transaction['units_sold'] = 0;
+            }
+
+            $transaction['returns'] = $this->calculateTransactionReturns($transaction, $update, $timeline, $sellTransactionData);
+
+            //We calculate the total number of units for latest_value
+            if ($timeline && $timeline->timelineDateBeingProcessed) {
+                $lastTransactionNav = $transaction['returns'][$timeline->timelineDateBeingProcessed];
+            } else {
+                $lastTransactionNav = $this->helper->last($transaction['returns']);
+            }
+
+            if ($lastTransactionNav) {
+                $transaction['latest_value_date'] = $lastTransactionNav['date'];
+                $transaction['latest_value'] = $lastTransactionNav['total_return'];
+            } else {
+                $transaction['latest_value_date'] = 0;
+                $transaction['latest_value'] = 0;
+            }
+
+            return $transaction;
+            // }
         }
 
         return false;
@@ -570,32 +587,56 @@ class MfTransactions extends BasePackage
             $units = 0;
         }
 
-        $navs = $this->scheme['navs']['navs'];
-        $navsKeys = array_keys($navs);
+        $navs = &$this->scheme['navs']['navs'];
+        // $navsKeys = array_keys($navs);
         $navsToProcess = [];
 
         if ($timeline && $timeline->timelineDateBeingProcessed) {
-            if (!isset($navs[$timeline->timelineDateBeingProcessed])) {
-                $timeline->timelineDateBeingProcessed = $this->helper->last($navs)['date'];
+            // if (!isset($navs[$timeline->timelineDateBeingProcessed])) {
+            //     $timeline->timelineDateBeingProcessed = $this->helper->last($navs)['date'];
+            // }
+
+            // $navsToProcess[$transaction['date']] = $navs[$transaction['date']];
+            // $navsToProcess[$timeline->timelineDateBeingProcessed] = $navs[$timeline->timelineDateBeingProcessed];
+
+            if (!isset($navs[$timeline->timelineDateBeingProcessed]) &&
+                !$this->schemesPackage->getSchemeNavByDate($this->scheme, $timeline->timelineDateBeingProcessed)
+            ) {
+                $timeline->timelineDateBeingProcessed = $this->scheme['navs_last_updated'];
             }
 
-            $navsToProcess[$transaction['date']] = $navs[$transaction['date']];
+            if (!isset($navs[$transaction['date']])) {
+                $navs[$transaction['date']] =
+                    $navsToProcess[$transaction['date']] =
+                        $this->schemesPackage->getSchemeNavByDate($this->scheme, $transaction['date']);
+            } else {
+                $navsToProcess[$transaction['date']] = $navs[$transaction['date']];
+            }
 
-            $navsToProcess[$timeline->timelineDateBeingProcessed] = $navs[$timeline->timelineDateBeingProcessed];
+            if (!isset($navs[$timeline->timelineDateBeingProcessed])) {
+                $navs[$timeline->timelineDateBeingProcessed] =
+                    $navsToProcess[$timeline->timelineDateBeingProcessed] =
+                        $this->schemesPackage->getSchemeNavByDate($this->scheme, $timeline->timelineDateBeingProcessed);
+            } else {
+                $navsToProcess[$timeline->timelineDateBeingProcessed] = $navs[$timeline->timelineDateBeingProcessed];
+            }
         } else {
-            $transactionDateKey = array_search($transaction['date'], $navsKeys);
+            // $transactionDateKey = array_search($transaction['date'], $navsKeys);
 
-            $navs = array_slice($navs, $transactionDateKey);
+            // $navs = array_slice($navs, $transactionDateKey);
 
             $navsToProcess[$this->helper->firstKey($navs)] = $this->helper->first($navs);
+            // $navsToProcess[$this->scheme['start_date']] = $this->schemesPackage->getSchemeNavByDate($this->scheme, null, true);
 
-            if ($sellTransactionData && isset($sellTransactionData['date']) && isset($navs[$sellTransactionData['date']])) {
+            if ($sellTransactionData && isset($sellTransactionData['date'])) {
                 $navsToProcess[$sellTransactionData['date']] = $navs[$sellTransactionData['date']];
+                // $navsToProcess[$sellTransactionData['date']] = $this->schemesPackage->getSchemeNavByDate($this->scheme, $sellTransactionData['date']);
             }
 
             $navsToProcess[$this->helper->lastKey($navs)] = $this->helper->last($navs);
+            // $navsToProcess[$this->scheme['navs_last_updated']] = $this->schemesPackage->getSchemeNavByDate($this->scheme, null, false, true);
         }
-
+        // trace([$navsToProcess]);
         $transaction['returns'] = [];
 
         foreach ($navsToProcess as $nav) {
