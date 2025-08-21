@@ -594,45 +594,20 @@ class MfTransactions extends BasePackage
 
             $navsToProcess[$transaction['date']] = $navs[$transaction['date']];
             $navsToProcess[$timeline->timelineDateBeingProcessed] = $navs[$timeline->timelineDateBeingProcessed];
-
-            // if (!isset($navs[$timeline->timelineDateBeingProcessed]) &&
-            //     !$this->schemesPackage->getSchemeNavByDate($this->scheme, $timeline->timelineDateBeingProcessed)
-            // ) {
-            //     $timeline->timelineDateBeingProcessed = $this->scheme['navs_last_updated'];
-            // }
-
-            // if (!isset($navs[$transaction['date']])) {
-            //     $navs[$transaction['date']] =
-            //         $navsToProcess[$transaction['date']] =
-            //             $this->schemesPackage->getSchemeNavByDate($this->scheme, $transaction['date']);
-            // } else {
-            //     $navsToProcess[$transaction['date']] = $navs[$transaction['date']];
-            // }
-
-            // if (!isset($navs[$timeline->timelineDateBeingProcessed])) {
-            //     $navs[$timeline->timelineDateBeingProcessed] =
-            //         $navsToProcess[$timeline->timelineDateBeingProcessed] =
-            //             $this->schemesPackage->getSchemeNavByDate($this->scheme, $timeline->timelineDateBeingProcessed);
-            // } else {
-            //     $navsToProcess[$timeline->timelineDateBeingProcessed] = $navs[$timeline->timelineDateBeingProcessed];
-            // }
         } else {
             $transactionDateKey = array_search($transaction['date'], $navsKeys);
 
             $navs = array_slice($navs, $transactionDateKey);
 
             $navsToProcess[$this->helper->firstKey($navs)] = $this->helper->first($navs);
-            // $navsToProcess[$this->scheme['start_date']] = $this->schemesPackage->getSchemeNavByDate($this->scheme, null, true);
 
             if ($sellTransactionData && isset($sellTransactionData['date'])) {
                 $navsToProcess[$sellTransactionData['date']] = $navs[$sellTransactionData['date']];
-                // $navsToProcess[$sellTransactionData['date']] = $this->schemesPackage->getSchemeNavByDate($this->scheme, $sellTransactionData['date']);
             }
 
             $navsToProcess[$this->helper->lastKey($navs)] = $this->helper->last($navs);
-            // $navsToProcess[$this->scheme['navs_last_updated']] = $this->schemesPackage->getSchemeNavByDate($this->scheme, null, false, true);
         }
-        // trace([$navsToProcess]);
+
         $transaction['returns'] = [];
 
         foreach ($navsToProcess as $nav) {
