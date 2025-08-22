@@ -43,6 +43,13 @@ class MfTransactions
                     ]
                 ),
                 new Column(
+                    'strategy_id',
+                    [
+                        'type'          => Column::TYPE_INTEGER,
+                        'notNull'       => false,
+                    ]
+                ),
+                new Column(
                     'amc_id',
                     [
                         'type'          => Column::TYPE_INTEGER,
@@ -74,6 +81,13 @@ class MfTransactions
                 ),
                 new Column(
                     'amount',
+                    [
+                        'type'          => Column::TYPE_FLOAT,
+                        'notNull'       => true,
+                    ]
+                ),
+                new Column(
+                    'nav',
                     [
                         'type'          => Column::TYPE_FLOAT,
                         'notNull'       => true,

@@ -42,6 +42,7 @@ class MfTransactions extends BasePackage
             $data['status'] = 'open';
             $data['user_id'] = $portfolio['user_id'];
             $data['available_amount'] = $data['amount'];
+
             if ($this->calculateTransactionUnitsAndValues($data)) {
                 if ($this->add($data)) {
                     if (isset($portfolio['investments'][$data['scheme_id']])) {
@@ -72,7 +73,7 @@ class MfTransactions extends BasePackage
 
             return false;
         } else if ($data['type'] === 'sell') {
-            $this->scheme = $this->schemesPackage->getSchemeFromAmfiCodeOrSchemeId($data);
+            $this->scheme = $this->schemesPackage->getSchemeFromAmfiCodeOrSchemeId($data, true);
 
             if (!$this->scheme) {
                 $this->addResponse('Scheme with id not found!', 1);
@@ -132,7 +133,7 @@ class MfTransactions extends BasePackage
                             2
                         );
                 }
-                // trace([$canSellTransactions]);
+
                 if (isset($canSellTransactions[$this->scheme['id']])) {
                     if (isset($data['amount'])) {
                         if ((float) $data['amount'] > $canSellTransactions[$this->scheme['id']]['available_amount']) {
@@ -178,6 +179,7 @@ class MfTransactions extends BasePackage
                     $data['scheme_id'] = $this->scheme['id'];
                     $data['amc_id'] = $this->scheme['amc_id'];
                     $data['date_closed'] = $data['date'];
+                    $data['nav'] = $canSellTransactions[$this->scheme['id']]['returns'][$data['date']]['nav'];
 
                     if ($this->add($data)) {
                         $data = array_merge($data, $this->packagesData->last);

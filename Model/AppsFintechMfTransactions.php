@@ -14,6 +14,8 @@ class AppsFintechMfTransactions extends BaseModel
 
     public $portfolio_id;
 
+    public $strategy_id;
+
     public $amc_id;
 
     public $scheme_id;
@@ -23,6 +25,8 @@ class AppsFintechMfTransactions extends BaseModel
     public $date_closed;
 
     public $amount;
+
+    public $nav;
 
     public $available_amount;
 
